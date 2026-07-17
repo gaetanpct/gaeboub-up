@@ -23,7 +23,6 @@
     root.ReachUpEngine = factory(b.BOARD, b.CHANCE_CARDS, b.HOUSE_COST_BY_GROUP, b.RENT_MULTIPLIERS_BY_HOUSES);
   }
 })(typeof window !== "undefined" ? window : globalThis, function (BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES) {
-
   const STARTING_MONEY = 1500;
   const SALARY = 200;
   const JAIL_POSITION = 10;
@@ -55,6 +54,9 @@
       this.vacationPotEnabled = !!options.vacationPot;
       this.vacationPot = 0;
       this.turnLimit = options.turnLimit || null;
+      this.diceSides = options.diceSides || 6;
+      this.auctionMode = options.auctionMode === "classic" ? "classic" : "secret";
+      this.tradeTaxPercent = options.tradeTaxPercent || 0;
 
       const startingMoney = options.startingMoney || STARTING_MONEY;
       this.players = playerNames.map((name, id) => ({
@@ -112,8 +114,8 @@
     }
 
     rollDice() {
-      const d1 = 1 + Math.floor(Math.random() * 6);
-      const d2 = 1 + Math.floor(Math.random() * 6);
+      const d1 = 1 + Math.floor(Math.random() * this.diceSides);
+      const d2 = 1 + Math.floor(Math.random() * this.diceSides);
       return [d1, d2];
     }
 
@@ -562,10 +564,7 @@
       }
     }
 
-    // ---- Enchères scellées — Phase 7 ----
-    // Chaque joueur actif mise en secret (0 = passer) ; la mise la plus
-    // haute remporte la propriété. En cas d'égalité, le premier joueur
-    // (dans l'ordre des identifiants) l'emporte.
+    // ---- Enchères — Phase 7 (secrète) + Phase 8a (classique) ----
     startAuction(tileIndex) {
       const tile = this.board[tileIndex];
       const bidders = this.activePlayers().map((p) => p.id);
@@ -573,12 +572,28 @@
         this._afterRollResolved(this._pendingDiceWasDouble);
         return;
       }
-      this.pendingAuction = { tileIndex, bids: {}, pendingPlayers: bidders };
-      this.addLog(`🔨 Enchère scellée sur ${tile.name} ! Chaque joueur mise en secret (0 pour passer).`);
+
+      if (this.auctionMode === "classic") {
+        this.pendingAuction = {
+          mode: "classic",
+          tileIndex,
+          currentBid: 0,
+          currentBidderId: null,
+          activeBidders: bidders,
+          turnIndex: 0,
+        };
+        this.addLog(`🔨 Enchère classique sur ${tile.name} ! Chacun mise à son tour ou passe.`);
+      } else {
+        this.pendingAuction = { mode: "secret", tileIndex, bids: {}, pendingPlayers: bidders };
+        this.addLog(`🔨 Enchère scellée sur ${tile.name} ! Chaque joueur mise en secret (0 pour passer).`);
+      }
     }
 
+    // -- Enchère scellée (secret) --
     submitAuctionBid(playerId, amount) {
-      if (!this.pendingAuction) return { ok: false, reason: "Aucune enchère en cours." };
+      if (!this.pendingAuction || this.pendingAuction.mode !== "secret") {
+        return { ok: false, reason: "Aucune enchère scellée en cours." };
+      }
       if (!this.pendingAuction.pendingPlayers.includes(playerId)) {
         return { ok: false, reason: "Tu as déjà misé, ou cette enchère ne te concerne pas." };
       }
@@ -591,12 +606,12 @@
       this.addLog(`${player.name} a soumis sa mise scellée.`);
 
       if (this.pendingAuction.pendingPlayers.length === 0) {
-        this._resolveAuction();
+        this._resolveSecretAuction();
       }
       return { ok: true };
     }
 
-    _resolveAuction() {
+    _resolveSecretAuction() {
       const auction = this.pendingAuction;
       const tile = this.board[auction.tileIndex];
 
@@ -612,14 +627,70 @@
 
       const summary = this.activePlayers().map((p) => `${p.name} : ${auction.bids[p.id] || 0}`).join(", ");
       this.addLog(`Résultats de l'enchère sur ${tile.name} — ${summary}.`);
+      this._concludeAuction(bestId, bestBid);
+    }
 
-      if (bestId !== null && bestBid > 0) {
-        const winner = this.players[bestId];
-        this.pay(winner, null, bestBid);
+    // -- Enchère classique (à la criée, tour par tour) --
+    currentAuctionBidderId() {
+      if (!this.pendingAuction || this.pendingAuction.mode !== "classic") return null;
+      const a = this.pendingAuction;
+      return a.activeBidders[a.turnIndex % a.activeBidders.length];
+    }
+
+    raiseAuctionBid(playerId, amount) {
+      if (!this.pendingAuction || this.pendingAuction.mode !== "classic") {
+        return { ok: false, reason: "Aucune enchère classique en cours." };
+      }
+      if (this.currentAuctionBidderId() !== playerId) return { ok: false, reason: "Ce n'est pas ton tour d'enchérir." };
+
+      const auction = this.pendingAuction;
+      const player = this.players[playerId];
+      const bid = Math.floor(Number(amount) || 0);
+      if (bid <= auction.currentBid) return { ok: false, reason: "Ta mise doit être supérieure à la mise actuelle." };
+      if (bid > player.money) return { ok: false, reason: "Tu n'as pas assez d'argent pour cette mise." };
+
+      auction.currentBid = bid;
+      auction.currentBidderId = playerId;
+      auction.turnIndex = (auction.turnIndex + 1) % auction.activeBidders.length;
+      this.addLog(`${player.name} enchérit à ${bid} sur ${this.board[auction.tileIndex].name}.`);
+      return { ok: true };
+    }
+
+    passAuctionBid(playerId) {
+      if (!this.pendingAuction || this.pendingAuction.mode !== "classic") {
+        return { ok: false, reason: "Aucune enchère classique en cours." };
+      }
+      if (this.currentAuctionBidderId() !== playerId) return { ok: false, reason: "Ce n'est pas ton tour d'enchérir." };
+
+      const auction = this.pendingAuction;
+      const player = this.players[playerId];
+      const removedTurnIndex = auction.turnIndex;
+      auction.activeBidders.splice(removedTurnIndex, 1);
+      this.addLog(`${player.name} passe sur l'enchère.`);
+
+      if (auction.activeBidders.length <= 1) {
+        const winnerId = auction.activeBidders.length === 1 ? auction.activeBidders[0] : null;
+        const finalWinner = winnerId !== null && winnerId === auction.currentBidderId ? winnerId : null;
+        this._concludeAuction(finalWinner, auction.currentBid);
+        return { ok: true };
+      }
+
+      if (auction.turnIndex >= auction.activeBidders.length) auction.turnIndex = 0;
+      return { ok: true };
+    }
+
+    // Conclut n'importe quelle enchère (secrète ou classique) : attribue
+    // la propriété au gagnant s'il y en a un, sinon elle reste libre.
+    _concludeAuction(winnerId, winningBid) {
+      const tile = this.board[this.pendingAuction.tileIndex];
+
+      if (winnerId !== null && winningBid > 0) {
+        const winner = this.players[winnerId];
+        this.pay(winner, null, winningBid);
         tile.owner = winner.id;
-        this.addLog(`🔨 ${winner.name} remporte l'enchère sur ${tile.name} pour ${bestBid} !`);
+        this.addLog(`🔨 ${winner.name} remporte l'enchère sur ${tile.name} pour ${winningBid} !`);
       } else {
-        this.addLog(`Personne n'a misé : ${tile.name} reste libre.`);
+        this.addLog(`Personne n'a remporté l'enchère : ${tile.name} reste libre.`);
       }
 
       this.pendingAuction = null;
@@ -695,11 +766,17 @@
 
       trade.offerTiles.forEach((i) => { this.board[i].owner = trade.toId; });
       trade.requestTiles.forEach((i) => { this.board[i].owner = trade.fromId; });
-      this.pay(from, to, trade.offerMoney);
-      this.pay(to, from, trade.requestMoney);
+
+      const offerTax = Math.floor((trade.offerMoney * this.tradeTaxPercent) / 100);
+      const requestTax = Math.floor((trade.requestMoney * this.tradeTaxPercent) / 100);
+      this.pay(from, null, offerTax); // la taxe part à la banque, pas à l'autre joueur
+      this.pay(to, null, requestTax);
+      this.pay(from, to, trade.offerMoney - offerTax);
+      this.pay(to, from, trade.requestMoney - requestTax);
 
       this.tradeOffers.splice(idx, 1);
-      this.addLog(`🤝 Échange conclu entre ${from.name} et ${to.name} !`);
+      const taxNote = this.tradeTaxPercent > 0 ? ` (taxe de ${this.tradeTaxPercent}% prélevée)` : "";
+      this.addLog(`🤝 Échange conclu entre ${from.name} et ${to.name}${taxNote} !`);
       return { ok: true };
     }
 
@@ -724,10 +801,23 @@
         lastRoll: this.lastRoll,
         vacationPot: this.vacationPotEnabled ? this.vacationPot : null,
         turnLimit: this.turnLimit,
-        // On ne révèle jamais les montants misés avant la fin de l'enchère
-        // (c'est une enchère scellée) — seulement qui doit encore miser.
+        // Enchère secrète : on ne révèle jamais les montants avant la fin.
+        // Enchère classique : tout est public (comme à la criée en vrai).
         pendingAuction: this.pendingAuction
-          ? { tileIndex: this.pendingAuction.tileIndex, pendingPlayers: [...this.pendingAuction.pendingPlayers] }
+          ? this.pendingAuction.mode === "classic"
+            ? {
+                mode: "classic",
+                tileIndex: this.pendingAuction.tileIndex,
+                currentBid: this.pendingAuction.currentBid,
+                currentBidderId: this.pendingAuction.currentBidderId,
+                activeBidders: [...this.pendingAuction.activeBidders],
+                currentTurnPlayerId: this.currentAuctionBidderId(),
+              }
+            : {
+                mode: "secret",
+                tileIndex: this.pendingAuction.tileIndex,
+                pendingPlayers: [...this.pendingAuction.pendingPlayers],
+              }
           : null,
         tradeOffers: this.tradeOffers.map((t) => ({ ...t })),
         players: this.players.map((p) => ({
@@ -766,13 +856,26 @@
       do {
         if (this.pendingAuction) {
           const tile = this.board[this.pendingAuction.tileIndex];
-          // Copie du tableau : on va le modifier pendant qu'on le parcourt.
-          [...this.pendingAuction.pendingPlayers].forEach((pid) => {
-            const bidder = this.players[pid];
-            const wantsIt = this.decideBuy(bidder, tile);
-            const amount = wantsIt ? Math.min(tile.price, Math.floor(bidder.money * 0.3)) : 0;
-            this.submitAuctionBid(pid, amount);
-          });
+          if (this.pendingAuction.mode === "classic") {
+            // Chacun mise ou passe à son tour jusqu'à ce qu'il n'en reste qu'un.
+            const bidderId = this.currentAuctionBidderId();
+            const bidder = this.players[bidderId];
+            const nextBid = this.pendingAuction.currentBid + Math.floor(tile.price * 0.1) + 5;
+            const wantsIt = this.decideBuy(bidder, tile) && nextBid <= tile.price;
+            if (wantsIt && nextBid <= bidder.money) {
+              this.raiseAuctionBid(bidderId, nextBid);
+            } else {
+              this.passAuctionBid(bidderId);
+            }
+          } else {
+            // Copie du tableau : on va le modifier pendant qu'on le parcourt.
+            [...this.pendingAuction.pendingPlayers].forEach((pid) => {
+              const bidder = this.players[pid];
+              const wantsIt = this.decideBuy(bidder, tile);
+              const amount = wantsIt ? Math.min(tile.price, Math.floor(bidder.money * 0.3)) : 0;
+              this.submitAuctionBid(pid, amount);
+            });
+          }
         } else if (this.pendingDecision) {
           const tile = this.board[this.pendingDecision.tileIndex];
           const player = this.players[this.pendingDecision.playerId];

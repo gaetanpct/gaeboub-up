@@ -13,6 +13,7 @@ const http = require("http");
 const path = require("path");
 const { Server } = require("socket.io");
 const { GameEngine } = require(path.join(__dirname, "public", "game", "engine.js"));
+const { buildDefaultSettings, validateSettings } = require(path.join(__dirname, "public", "game", "rules-schema.js"));
 
 const app = express();
 const server = http.createServer(app);
@@ -60,7 +61,29 @@ function broadcastLobby(room) {
 }
 
 function broadcastGame(room) {
-  io.to(room.code).emit("game:update", { state: room.engine.getPublicState() });
+  const baseState = room.engine.getPublicState();
+
+  room.players.forEach((p) => {
+    const playerId = room.socketToPlayerId[p.socketId];
+    const stateForPlayer = buildStateForPlayer(baseState, playerId, room.settings);
+    io.to(p.socketId).emit("game:update", { state: stateForPlayer });
+  });
+}
+
+// Si la règle "négociations secrètes" est active, un joueur ne voit le
+// détail (propriétés/argent) d'un échange que s'il en fait partie.
+// Les autres voient juste qu'une négociation existe, sans son contenu.
+function buildStateForPlayer(baseState, playerId, settings) {
+  if (!settings.secretTrades) return baseState;
+
+  return {
+    ...baseState,
+    tradeOffers: baseState.tradeOffers.map((trade) => {
+      const isParty = trade.fromId === playerId || trade.toId === playerId;
+      if (isParty) return trade;
+      return { id: trade.id, fromId: trade.fromId, toId: trade.toId, hidden: true };
+    }),
+  };
 }
 
 io.on("connection", (socket) => {
@@ -75,12 +98,7 @@ io.on("connection", (socket) => {
       engine: null,
       started: false,
       socketToPlayerId: {},
-      settings: {
-        startingMoney: 1500,
-        salary: 200,
-        vacationPot: false,
-        turnLimit: null,
-      },
+      settings: buildDefaultSettings(),
     };
     rooms.set(code, room);
 
@@ -129,22 +147,8 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const ALLOWED_MONEY = [1000, 1500, 2000];
-    const ALLOWED_SALARY = [100, 200, 300];
-    const ALLOWED_TURN_LIMITS = [null, 60, 100, 150];
-
-    if (ALLOWED_MONEY.includes(payload.startingMoney)) {
-      room.settings.startingMoney = payload.startingMoney;
-    }
-    if (ALLOWED_SALARY.includes(payload.salary)) {
-      room.settings.salary = payload.salary;
-    }
-    room.settings.vacationPot = !!payload.vacationPot;
-    const turnLimit = payload.turnLimit === null || payload.turnLimit === undefined ? null : Number(payload.turnLimit);
-    if (ALLOWED_TURN_LIMITS.includes(turnLimit)) {
-      room.settings.turnLimit = turnLimit;
-    }
-
+    const validated = validateSettings(payload);
+    Object.assign(room.settings, validated);
     broadcastLobby(room);
   });
 
@@ -269,6 +273,32 @@ io.on("connection", (socket) => {
     const result = room.engine.submitAuctionBid(myPlayerId, payload && payload.amount);
     if (!result || !result.ok) {
       socket.emit("room:error", (result && result.reason) || "Mise impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:auctionRaise", (payload) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.raiseAuctionBid(myPlayerId, payload && payload.amount);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Mise impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:auctionPass", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.passAuctionBid(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
       return;
     }
     broadcastGame(room);

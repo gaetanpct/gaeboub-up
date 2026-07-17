@@ -141,6 +141,11 @@
   }
 
   function renderDie(value) {
+    // Au-delà de 6 (dé à 8 faces), pas de motif de points classique :
+    // on affiche directement le chiffre pour rester lisible.
+    if (value > 6) {
+      return `<div class="die die--number">${value}</div>`;
+    }
     const pattern = DICE_PATTERNS[value] || DICE_PATTERNS[1];
     const dots = pattern.map((visible) => `<span class="die-dot${visible ? " die-dot--on" : ""}"></span>`).join("");
     return `<div class="die">${dots}</div>`;

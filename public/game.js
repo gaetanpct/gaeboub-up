@@ -72,39 +72,83 @@ const btnStart = document.getElementById("btn-start");
 btnReady.addEventListener("click", () => socket.emit("room:toggleReady"));
 btnStart.addEventListener("click", () => socket.emit("room:start"));
 
-// ---- Réglages de la partie (Phase 5) ----
-const settingInputs = {
-  startingMoney: document.getElementById("setting-startingMoney"),
-  salary: document.getElementById("setting-salary"),
-  vacationPot: document.getElementById("setting-vacationPot"),
-  turnLimit: document.getElementById("setting-turnLimit"),
-};
+// ---- Réglages de la partie (Phase 5, généralisé en Phase 8a) ----
+// Le formulaire entier est généré à partir de RULES_SCHEMA (rules-schema.js) :
+// ajouter une règle dans ce schéma suffit à la faire apparaître ici,
+// sans toucher à ce fichier.
+const settingsContainer = document.getElementById("settings-container");
+const RULES_SCHEMA = ReachUpRules.RULES_SCHEMA;
+let currentIsHost = false;
 
-function emitSettingsChange() {
-  socket.emit("room:updateSettings", {
-    startingMoney: Number(settingInputs.startingMoney.value),
-    salary: Number(settingInputs.salary.value),
-    vacationPot: settingInputs.vacationPot.checked,
-    turnLimit: settingInputs.turnLimit.value ? Number(settingInputs.turnLimit.value) : null,
+function findRuleDef(ruleId) {
+  for (const category of RULES_SCHEMA) {
+    const found = category.rules.find((r) => r.id === ruleId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function renderRuleControl(rule, value) {
+  if (rule.type === "boolean") {
+    return `
+      <label class="checkbox-label">
+        <input type="checkbox" data-rule-id="${rule.id}" data-rule-type="boolean" ${value ? "checked" : ""} />
+        ${rule.label}
+      </label>
+    `;
+  }
+  // type === "select"
+  const optionsHtml = rule.options
+    .map((opt) => {
+      const optValue = opt.value === null ? "" : String(opt.value);
+      const selected = opt.value === value ? "selected" : "";
+      return `<option value="${optValue}" ${selected}>${opt.label}</option>`;
+    })
+    .join("");
+  return `
+    <label>
+      ${rule.label}
+      <select data-rule-id="${rule.id}" data-rule-type="select">${optionsHtml}</select>
+    </label>
+  `;
+}
+
+function renderSettingsForm(settings) {
+  settingsContainer.innerHTML = RULES_SCHEMA.map(
+    (category) => `
+      <fieldset class="settings-category">
+        <legend>${category.category}</legend>
+        ${category.rules.map((rule) => renderRuleControl(rule, settings[rule.id])).join("")}
+      </fieldset>
+    `
+  ).join("");
+
+  settingsContainer.querySelectorAll("[data-rule-id]").forEach((el) => {
+    el.disabled = !currentIsHost;
+    el.addEventListener("change", emitSettingsChange);
   });
 }
 
-Object.values(settingInputs).forEach((el) => {
-  el.addEventListener("change", emitSettingsChange);
-});
-
-function applySettingsToInputs(settings) {
-  if (!settings) return;
-  const moneyStr = String(settings.startingMoney);
-  if (settingInputs.startingMoney.value !== moneyStr) settingInputs.startingMoney.value = moneyStr;
-
-  const salaryStr = String(settings.salary);
-  if (settingInputs.salary.value !== salaryStr) settingInputs.salary.value = salaryStr;
-
-  settingInputs.vacationPot.checked = !!settings.vacationPot;
-
-  const turnLimitStr = settings.turnLimit ? String(settings.turnLimit) : "";
-  if (settingInputs.turnLimit.value !== turnLimitStr) settingInputs.turnLimit.value = turnLimitStr;
+function emitSettingsChange() {
+  const payload = {};
+  settingsContainer.querySelectorAll("[data-rule-id]").forEach((el) => {
+    const ruleId = el.dataset.ruleId;
+    if (el.dataset.ruleType === "boolean") {
+      payload[ruleId] = el.checked;
+      return;
+    }
+    const ruleDef = findRuleDef(ruleId);
+    const rawValue = el.value;
+    if (rawValue === "") {
+      payload[ruleId] = null;
+      return;
+    }
+    // On retrouve la valeur d'origine (nombre, chaîne...) depuis le schéma,
+    // pour ne pas envoyer une chaîne de caractères là où un nombre est attendu.
+    const matchingOption = ruleDef.options.find((opt) => String(opt.value) === rawValue);
+    payload[ruleId] = matchingOption ? matchingOption.value : rawValue;
+  });
+  socket.emit("room:updateSettings", payload);
 }
 
 socket.on("room:update", (room) => {
@@ -126,12 +170,9 @@ socket.on("room:update", (room) => {
     lobbyPlayersEl.appendChild(card);
   });
 
-  applySettingsToInputs(room.settings);
-
   const isHost = room.hostSocketId === socket.id;
-  Object.values(settingInputs).forEach((el) => {
-    el.disabled = !isHost;
-  });
+  currentIsHost = isHost;
+  renderSettingsForm(room.settings || {});
 
   btnStart.hidden = !isHost;
   btnStart.disabled = !room.canStart;
@@ -239,9 +280,45 @@ function renderActionArea(state) {
   actionArea.innerHTML = "";
   if (state.gameOver) return;
 
-  // Cas 0 : une enchère scellée est en cours
+  // Cas 0 : une enchère est en cours (secrète ou classique)
   if (state.pendingAuction) {
     const tile = state.board[state.pendingAuction.tileIndex];
+
+    if (state.pendingAuction.mode === "classic") {
+      const auction = state.pendingAuction;
+      const box = document.createElement("div");
+      box.className = "action-box";
+
+      if (auction.currentTurnPlayerId === myPlayerId) {
+        const minBid = auction.currentBid + 1;
+        box.innerHTML = `
+          <p>🔨 Enchère classique sur <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
+          <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
+          <input type="number" id="auction-raise-input" min="${minBid}" value="${minBid}" class="auction-input" />
+          <button id="btn-raise-bid" class="btn-primary">Enchérir</button>
+          <button id="btn-pass-bid">Passer</button>
+        `;
+        actionArea.appendChild(box);
+        document.getElementById("btn-raise-bid").addEventListener("click", () => {
+          const amount = Number(document.getElementById("auction-raise-input").value) || 0;
+          socket.emit("game:auctionRaise", { amount });
+        });
+        document.getElementById("btn-pass-bid").addEventListener("click", () => {
+          socket.emit("game:auctionPass");
+        });
+      } else {
+        const turnName = state.players[auction.currentTurnPlayerId].name;
+        box.innerHTML = `
+          <p>🔨 Enchère classique sur <strong>${tile.name}</strong></p>
+          <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
+          <p class="action-box--waiting">Au tour de ${turnName}...</p>
+        `;
+        actionArea.appendChild(box);
+      }
+      return;
+    }
+
+    // mode "secret"
     if (state.pendingAuction.pendingPlayers.includes(myPlayerId)) {
       const box = document.createElement("div");
       box.className = "action-box";
