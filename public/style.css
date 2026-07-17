@@ -235,3 +235,163 @@ button:disabled {
   line-height: 1.4;
   color: #b9b2cc;
 }
+
+/* ============================================================
+   Phase 4 : plateau visuel (pions, couleurs, dés animés)
+   ============================================================ */
+
+.board-container {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+}
+
+.board-grid {
+  position: relative;
+  width: min(94vw, 640px);
+  aspect-ratio: 1 / 1;
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  grid-template-rows: repeat(11, 1fr);
+  background: #0e0b17;
+  border-radius: 10px;
+  padding: 4px;
+  gap: 2px;
+}
+
+.board-tile {
+  position: relative;
+  background: #1e1830;
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1px;
+  font-size: 0.5rem;
+  line-height: 1.05;
+  text-align: center;
+  padding: 2px 1px 3px;
+  overflow: hidden;
+  color: #cfc9de;
+}
+
+.board-tile--corner {
+  background: #241c3a;
+  font-size: 0.6rem;
+  font-weight: 700;
+  justify-content: center;
+  color: #f2f0f7;
+}
+
+.board-tile--property {
+  padding-top: 7px;
+}
+
+.board-tile__band {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 5px;
+  background: var(--group-color, transparent);
+}
+
+.board-tile--owned {
+  box-shadow: inset 0 0 0 2px var(--owner-color, transparent);
+}
+
+.board-tile__icon {
+  font-size: 0.75rem;
+}
+
+.board-tile__name {
+  font-size: 0.48rem;
+  word-break: break-word;
+}
+
+.board-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  background: #150f22;
+  border-radius: 8px;
+}
+
+.board-center__title {
+  font-weight: 800;
+  font-size: clamp(1rem, 3vw, 1.5rem);
+  color: #f2f0f7;
+  letter-spacing: 0.02em;
+}
+
+.dice-row {
+  display: flex;
+  gap: 0.5rem;
+  min-height: 2.2rem;
+}
+
+.die {
+  width: 2.2rem;
+  height: 2.2rem;
+  background: #f2f0f7;
+  border-radius: 5px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  padding: 4px;
+  gap: 1px;
+}
+
+.die-dot {
+  border-radius: 50%;
+}
+
+.die-dot--on {
+  background: #130f1d;
+}
+
+.dice-row--rolling .die {
+  animation: dice-roll 0.4s ease;
+}
+
+@keyframes dice-roll {
+  0% { transform: rotate(0deg) scale(1); }
+  40% { transform: rotate(-25deg) scale(1.15); }
+  70% { transform: rotate(15deg) scale(1.05); }
+  100% { transform: rotate(0deg) scale(1); }
+}
+
+.turn-indicator {
+  font-size: 0.8rem;
+  color: #a6f2c1;
+  font-weight: 600;
+  text-align: center;
+  padding: 0 0.5rem;
+}
+
+.tokens-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.token {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: left 0.35s ease, top 0.35s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.55rem;
+  font-weight: 800;
+  color: #130f1d;
+  border: 2px solid #130f1d;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+  z-index: 2;
+}

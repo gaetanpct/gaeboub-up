@@ -107,6 +107,7 @@ socket.on("game:update", ({ state }) => {
 });
 
 function renderGame(state) {
+  ReachUpBoardView.updateBoard(state, myPlayerId);
   renderPlayers(state);
   renderActionArea(state);
   renderLog(state);
@@ -129,6 +130,7 @@ function renderPlayers(state) {
     card.className = "player-card";
     if (player.bankrupt) card.classList.add("player-card--bankrupt");
     if (isCurrent) card.classList.add("player-card--current");
+    card.style.borderLeft = `4px solid ${ReachUpBoardView.PLAYER_COLORS[player.id % ReachUpBoardView.PLAYER_COLORS.length]}`;
 
     card.innerHTML = `
       <h3>${player.name}${player.id === myPlayerId ? " (toi)" : ""}</h3>

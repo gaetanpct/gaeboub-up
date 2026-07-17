@@ -50,6 +50,10 @@
 
     <!-- Écran de jeu -->
     <section id="screen-game" class="screen" hidden>
+      <div class="board-container">
+        <div id="board-grid" class="board-grid"></div>
+      </div>
+
       <div id="players-panel" class="players-panel"></div>
 
       <div id="action-area" class="action-area"></div>
@@ -60,6 +64,7 @@
   </main>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="board-view.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

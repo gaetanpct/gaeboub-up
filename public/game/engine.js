@@ -69,6 +69,10 @@
       this.pendingDecision = null; // { type: "buy", tileIndex, playerId }
       this._pendingDiceWasDouble = false;
       this._turnBannerLogged = false;
+
+      // Dernier lancer de dés effectué (Phase 4 : sert à afficher les dés
+      // sur le plateau visuel). null tant qu'aucun dé n'a été lancé.
+      this.lastRoll = null; // { playerId, d1, d2, isDouble, inJailRoll }
     }
 
     addLog(message) {
@@ -227,6 +231,7 @@
         return true;
       }
       const [d1, d2] = this.rollDice();
+      this.lastRoll = { playerId: player.id, d1, d2, isDouble: d1 === d2, inJailRoll: true };
       this.addLog(`${player.name} lance les dés en prison : ${d1} et ${d2}.`);
       if (d1 === d2) {
         player.inJail = false;
@@ -294,6 +299,7 @@
       const [d1, d2] = this.rollDice();
       const isDouble = d1 === d2;
       const sum = d1 + d2;
+      this.lastRoll = { playerId: player.id, d1, d2, isDouble, inJailRoll: false };
       this.addLog(`${player.name} lance les dés : ${d1} et ${d2}${isDouble ? " (double !)" : ""}.`);
 
       this.doublesStreak = isDouble ? this.doublesStreak + 1 : 0;
@@ -350,6 +356,7 @@
         pendingDecision: this.pendingDecision,
         gameOver: this.gameOver,
         winner: this.winner ? { id: this.winner.id, name: this.winner.name } : null,
+        lastRoll: this.lastRoll,
         players: this.players.map((p) => ({
           id: p.id,
           name: p.name,
