@@ -25,7 +25,6 @@
 })(typeof window !== "undefined" ? window : globalThis, function (BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES) {
   const STARTING_MONEY = 1500;
   const SALARY = 200;
-  const JAIL_POSITION = 10;
   const JAIL_FINE = 50;
   const MAX_JAIL_TURNS = 3;
 
@@ -48,7 +47,11 @@
     constructor(playerNames, options = {}) {
       // On clone le plateau à chaque partie : chaque partie a ses propres
       // propriétaires, sans jamais modifier le modèle partagé (BOARD_TEMPLATE).
-      this.board = BOARD_TEMPLATE.map((tile) => ({ ...tile }));
+      // Phase 8b : si un plateau généré est fourni (options.customBoard),
+      // on l'utilise à la place du plateau fixe — le moteur ne fait aucune
+      // différence entre les deux, un plateau est juste "un tableau de cases".
+      const sourceBoard = options.customBoard || BOARD_TEMPLATE;
+      this.board = sourceBoard.map((tile) => ({ ...tile }));
 
       this.salary = options.salary || SALARY;
       this.vacationPotEnabled = !!options.vacationPot;
@@ -135,7 +138,9 @@
     }
 
     sendToJail(player) {
-      player.position = JAIL_POSITION;
+      // La case Prison est toujours au premier quart du plateau (comme sur
+      // le plateau fixe), quelle que soit la taille réelle de celui-ci.
+      player.position = this.board.length / 4;
       player.inJail = true;
       player.jailTurns = 0;
       this.addLog(`${player.name} est envoyé en prison.`);
@@ -337,9 +342,11 @@
           }
           break;
         }
-        case "chance": {
+        case "chance":
+        case "special": {
           const card = CHANCE_CARDS[Math.floor(Math.random() * CHANCE_CARDS.length)];
-          this.addLog(`${player.name} tire une carte Destin : "${card.description}"`);
+          const label = tile.type === "special" ? "Carte Spéciale" : "Carte Destin";
+          this.addLog(`${player.name} tire une ${label} : "${card.description}"`);
           card.effect(this, player);
           break;
         }

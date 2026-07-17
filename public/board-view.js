@@ -1,14 +1,18 @@
 // ============================================================
 // REACH UP — Rendu du plateau visuel
 // Phase 4 : plateau, pions colorés (qui glissent d'une case à l'autre), dés animés
+// Phase 8b : généralisé pour supporter des plateaux de taille variable
+//            (générés procéduralement), + un rendu de prévisualisation
+//            statique pour le salon d'attente.
 //
 // Ce fichier ne connaît AUCUNE règle du jeu. Il sait seulement dessiner
-// un plateau de 40 cases en carré (disposition classique façon Monopoly)
+// un plateau carré (disposition classique façon Monopoly, coins compris)
 // et y déplacer des pions selon l'état reçu du serveur.
 //
-// Deux fonctions exposées (window.ReachUpBoardView) :
-//   - initBoard(boardData)            : construit le plateau une seule fois
-//   - updateBoard(state, myPlayerId)  : met à jour pions / dés / surbrillance
+// Fonctions exposées (window.ReachUpBoardView) :
+//   - initBoard(boardData)             : construit le plateau de jeu (une fois)
+//   - updateBoard(state, myPlayerId)   : met à jour pions / dés / surbrillance
+//   - renderPreview(containerEl, board): aperçu statique (salon d'attente)
 // ============================================================
 
 (function () {
@@ -44,30 +48,36 @@
     6: [1, 0, 1, 1, 0, 1, 1, 0, 1],
   };
 
-  // Convertit un index de case (0-39) en position {row, col} sur une
-  // grille 11x11 (0-indexé). Case 0 (Départ) en bas à droite, puis le
-  // plateau se lit dans le sens : bas → gauche → haut → droite → Départ.
-  function tilePosition(index) {
-    if (index === 0) return { row: 10, col: 10 };
-    if (index <= 9) return { row: 10, col: 10 - index };
-    if (index === 10) return { row: 10, col: 0 };
-    if (index <= 19) return { row: 20 - index, col: 0 };
-    if (index === 20) return { row: 0, col: 0 };
-    if (index <= 29) return { row: 0, col: index - 20 };
-    if (index === 30) return { row: 0, col: 10 };
-    return { row: index - 30, col: 10 };
+  // Convertit un index de case en position {row, col} sur une grille
+  // carrée (0-indexée) dont la taille dépend du nombre TOTAL de cases du
+  // plateau (40 par défaut, mais peut varier avec un plateau généré).
+  // Case 0 (Départ) en bas à droite, puis le plateau se lit dans le sens :
+  // bas → gauche → haut → droite → Départ. "last" = index de chaque coin
+  // suivant (= taille du plateau / 4).
+  function tilePosition(index, boardLength) {
+    const last = boardLength / 4;
+    if (index === 0) return { row: last, col: last };
+    if (index <= last - 1) return { row: last, col: last - index };
+    if (index === last) return { row: last, col: 0 };
+    if (index <= 2 * last - 1) return { row: 2 * last - index, col: 0 };
+    if (index === 2 * last) return { row: 0, col: 0 };
+    if (index <= 3 * last - 1) return { row: 0, col: index - 2 * last };
+    if (index === 3 * last) return { row: 0, col: last };
+    return { row: index - 3 * last, col: last };
   }
 
-  function tileCenterPercent(index) {
-    const pos = tilePosition(index);
+  function tileCenterPercent(index, boardLength) {
+    const pos = tilePosition(index, boardLength);
+    const gridSize = boardLength / 4 + 1;
     return {
-      xPct: ((pos.col + 0.5) / 11) * 100,
-      yPct: ((pos.row + 0.5) / 11) * 100,
+      xPct: ((pos.col + 0.5) / gridSize) * 100,
+      yPct: ((pos.row + 0.5) / gridSize) * 100,
     };
   }
 
-  function isCorner(index) {
-    return index === 0 || index === 10 || index === 20 || index === 30;
+  function isCorner(index, boardLength) {
+    const last = boardLength / 4;
+    return index === 0 || index === last || index === 2 * last || index === 3 * last;
   }
 
   function tileIcon(tile) {
@@ -78,10 +88,33 @@
       case "vacation": return "🏖️";
       case "tax": return "💸";
       case "chance": return "❓";
+      case "special": return "✨";
       case "airport": return "✈️";
       case "utility": return tile.name.includes("Eau") ? "💧" : "⚡";
       default: return "";
     }
+  }
+
+  function buildTileElement(tile, index, boardLength) {
+    const pos = tilePosition(index, boardLength);
+    const el = document.createElement("div");
+    el.className = "board-tile" + (isCorner(index, boardLength) ? " board-tile--corner" : "");
+    el.style.gridRow = pos.row + 1;
+    el.style.gridColumn = pos.col + 1;
+    el.dataset.tileIndex = index;
+
+    if (tile.group && GROUP_COLORS[tile.group]) {
+      el.style.setProperty("--group-color", GROUP_COLORS[tile.group]);
+      el.classList.add("board-tile--property");
+    }
+
+    el.innerHTML = `
+      <div class="board-tile__band"></div>
+      <div class="board-tile__icon">${tileIcon(tile)}</div>
+      <div class="board-tile__buildings" data-buildings-for="${index}"></div>
+      <div class="board-tile__name">${tile.short}</div>
+    `;
+    return el;
   }
 
   let boardEl = null;
@@ -93,37 +126,23 @@
     boardEl = document.getElementById("board-grid");
     if (!boardEl) return;
 
+    const gridSize = boardData.length / 4 + 1;
+    boardEl.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
+    boardEl.style.gridTemplateRows = `repeat(${gridSize}, 1fr)`;
+
     boardEl.innerHTML = "";
     tokenElements = {};
     lastRenderedRollKey = null;
 
     boardData.forEach((tile, index) => {
-      const pos = tilePosition(index);
-      const el = document.createElement("div");
-      el.className = "board-tile" + (isCorner(index) ? " board-tile--corner" : "");
-      el.style.gridRow = pos.row + 1;
-      el.style.gridColumn = pos.col + 1;
-      el.dataset.tileIndex = index;
-
-      if (tile.group && GROUP_COLORS[tile.group]) {
-        el.style.setProperty("--group-color", GROUP_COLORS[tile.group]);
-        el.classList.add("board-tile--property");
-      }
-
-      el.innerHTML = `
-        <div class="board-tile__band"></div>
-        <div class="board-tile__icon">${tileIcon(tile)}</div>
-        <div class="board-tile__buildings" data-buildings-for="${index}"></div>
-        <div class="board-tile__name">${tile.short}</div>
-      `;
-      boardEl.appendChild(el);
+      boardEl.appendChild(buildTileElement(tile, index, boardData.length));
     });
 
     // Zone centrale : titre + dés + indicateur de tour
     const center = document.createElement("div");
     center.className = "board-center";
-    center.style.gridRow = "2 / 11";
-    center.style.gridColumn = "2 / 11";
+    center.style.gridRow = `2 / ${gridSize}`;
+    center.style.gridColumn = `2 / ${gridSize}`;
     center.innerHTML = `
       <div class="board-center__title">Reach&nbsp;Up</div>
       <div id="dice-display" class="dice-row"></div>
@@ -138,6 +157,20 @@
     tokensLayerEl = document.createElement("div");
     tokensLayerEl.className = "tokens-layer";
     boardEl.appendChild(tokensLayerEl);
+  }
+
+  // Aperçu statique du plateau (salon d'attente) : juste les cases et
+  // leurs couleurs, aucun pion ni dé — sert uniquement à visualiser un
+  // plateau généré avant de lancer la partie (Phase 8b).
+  function renderPreview(containerEl, boardData) {
+    if (!containerEl) return;
+    const gridSize = boardData.length / 4 + 1;
+    containerEl.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
+    containerEl.style.gridTemplateRows = `repeat(${gridSize}, 1fr)`;
+    containerEl.innerHTML = "";
+    boardData.forEach((tile, index) => {
+      containerEl.appendChild(buildTileElement(tile, index, boardData.length));
+    });
   }
 
   function renderDie(value) {
@@ -201,7 +234,7 @@
       token.style.display = "";
       token.title = player.id === myPlayerId ? `${player.name} (toi)` : player.name;
 
-      const center = tileCenterPercent(player.position);
+      const center = tileCenterPercent(player.position, state.board.length);
       const offset = TOKEN_OFFSETS[player.id % TOKEN_OFFSETS.length];
       token.style.left = `calc(${center.xPct}% + ${offset.dx}%)`;
       token.style.top = `calc(${center.yPct}% + ${offset.dy}%)`;
@@ -246,5 +279,5 @@
     }
   }
 
-  window.ReachUpBoardView = { initBoard, updateBoard, PLAYER_COLORS };
+  window.ReachUpBoardView = { initBoard, updateBoard, renderPreview, PLAYER_COLORS };
 })();

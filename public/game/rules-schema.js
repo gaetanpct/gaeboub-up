@@ -31,6 +31,106 @@
 
   const RULES_SCHEMA = [
     {
+      category: "Plateau",
+      rules: [
+        {
+          id: "boardMode",
+          label: "Plateau",
+          type: "select",
+          default: "fixed",
+          options: [
+            { value: "fixed", label: "Fixe (classique)" },
+            { value: "random", label: "Généré aléatoirement" },
+          ],
+        },
+        {
+          id: "boardSize",
+          label: "Nombre de cases",
+          type: "select",
+          default: 40,
+          options: [
+            { value: 28, label: "28 (plus court)" },
+            { value: 32, label: "32" },
+            { value: 36, label: "36" },
+            { value: 40, label: "40 (classique)" },
+            { value: 44, label: "44 (plus long)" },
+          ],
+        },
+        {
+          id: "boardGroups",
+          label: "Nombre de groupes de propriétés",
+          type: "select",
+          default: 8,
+          options: [
+            { value: 4, label: "4" },
+            { value: 5, label: "5" },
+            { value: 6, label: "6" },
+            { value: 7, label: "7" },
+            { value: 8, label: "8 (classique)" },
+          ],
+        },
+        {
+          id: "boardChanceCards",
+          label: "Cartes Destin",
+          type: "select",
+          default: 6,
+          options: [
+            { value: 0, label: "0" },
+            { value: 2, label: "2" },
+            { value: 4, label: "4" },
+            { value: 6, label: "6 (classique)" },
+            { value: 8, label: "8" },
+          ],
+        },
+        {
+          id: "boardSpecialCards",
+          label: "Cartes Spéciales",
+          type: "select",
+          default: 0,
+          options: [
+            { value: 0, label: "0 (classique)" },
+            { value: 2, label: "2" },
+            { value: 4, label: "4" },
+          ],
+        },
+        {
+          id: "boardTaxes",
+          label: "Cases Taxes",
+          type: "select",
+          default: 2,
+          options: [
+            { value: 0, label: "0" },
+            { value: 2, label: "2 (classique)" },
+            { value: 4, label: "4" },
+          ],
+        },
+        {
+          id: "boardAirports",
+          label: "Gares/Aéroports",
+          type: "select",
+          default: 4,
+          options: [
+            { value: 0, label: "0" },
+            { value: 2, label: "2" },
+            { value: 4, label: "4 (classique)" },
+            { value: 6, label: "6" },
+          ],
+        },
+        {
+          id: "boardUtilities",
+          label: "Compagnies (eau/électricité)",
+          type: "select",
+          default: 2,
+          options: [
+            { value: 0, label: "0" },
+            { value: 1, label: "1" },
+            { value: 2, label: "2 (classique)" },
+            { value: 3, label: "3" },
+          ],
+        },
+      ],
+    },
+    {
       category: "Économie",
       rules: [
         {

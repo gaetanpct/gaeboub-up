@@ -14,6 +14,7 @@ const path = require("path");
 const { Server } = require("socket.io");
 const { GameEngine } = require(path.join(__dirname, "public", "game", "engine.js"));
 const { buildDefaultSettings, validateSettings } = require(path.join(__dirname, "public", "game", "rules-schema.js"));
+const { generateBoard } = require(path.join(__dirname, "public", "game", "board-generator.js"));
 
 const app = express();
 const server = http.createServer(app);
@@ -49,6 +50,28 @@ function getRoom(socket) {
   return code ? rooms.get(code) : null;
 }
 
+const BOARD_SHAPE_KEYS = [
+  "boardSize",
+  "boardGroups",
+  "boardChanceCards",
+  "boardSpecialCards",
+  "boardTaxes",
+  "boardAirports",
+  "boardUtilities",
+];
+
+function regenerateBoard(room) {
+  room.previewBoard = generateBoard({
+    totalTiles: room.settings.boardSize,
+    numGroups: room.settings.boardGroups,
+    numChanceCards: room.settings.boardChanceCards,
+    numSpecialCards: room.settings.boardSpecialCards,
+    numTaxes: room.settings.boardTaxes,
+    numAirports: room.settings.boardAirports,
+    numUtilities: room.settings.boardUtilities,
+  });
+}
+
 function broadcastLobby(room) {
   io.to(room.code).emit("room:update", {
     code: room.code,
@@ -57,6 +80,7 @@ function broadcastLobby(room) {
     canStart: room.players.length >= MIN_PLAYERS && room.players.every((p) => p.ready),
     maxPlayers: MAX_PLAYERS,
     settings: room.settings,
+    previewBoard: room.settings.boardMode === "random" ? room.previewBoard : null,
   });
 }
 
@@ -70,17 +94,19 @@ function broadcastGame(room) {
   });
 }
 
-// Si la règle "négociations secrètes" est active, un joueur ne voit le
-// détail (propriétés/argent) d'un échange que s'il en fait partie.
-// Les autres voient juste qu'une négociation existe, sans son contenu.
+// Si la règle "négociations secrètes" est active, on part du principe que
+// les joueurs se sont mis d'accord en dehors du jeu (appel, message...).
+// Seul le proposeur voit le détail de sa propre offre (il l'a construite
+// lui-même). Le destinataire ET les tiers ne voient que "un échange est
+// proposé", sans le contenu — sinon ce n'est plus vraiment secret : il
+// doit accepter ou refuser en se fiant à ce qui a été convenu ailleurs.
 function buildStateForPlayer(baseState, playerId, settings) {
   if (!settings.secretTrades) return baseState;
 
   return {
     ...baseState,
     tradeOffers: baseState.tradeOffers.map((trade) => {
-      const isParty = trade.fromId === playerId || trade.toId === playerId;
-      if (isParty) return trade;
+      if (trade.fromId === playerId) return trade;
       return { id: trade.id, fromId: trade.fromId, toId: trade.toId, hidden: true };
     }),
   };
@@ -99,6 +125,7 @@ io.on("connection", (socket) => {
       started: false,
       socketToPlayerId: {},
       settings: buildDefaultSettings(),
+      previewBoard: null, // rempli si boardMode === "random" (Phase 8b)
     };
     rooms.set(code, room);
 
@@ -148,7 +175,32 @@ io.on("connection", (socket) => {
     }
 
     const validated = validateSettings(payload);
+    const modeWasRandom = room.settings.boardMode === "random";
     Object.assign(room.settings, validated);
+
+    if (room.settings.boardMode === "random") {
+      const shapeChanged = BOARD_SHAPE_KEYS.some((k) => k in validated);
+      const justActivated = !modeWasRandom;
+      if (!room.previewBoard || shapeChanged || justActivated) {
+        regenerateBoard(room);
+      }
+    } else {
+      room.previewBoard = null;
+    }
+
+    broadcastLobby(room);
+  });
+
+  socket.on("room:regenerateBoard", () => {
+    const room = getRoom(socket);
+    if (!room || room.started) return;
+    if (socket.id !== room.hostSocketId) {
+      socket.emit("room:error", "Seul l'hôte peut régénérer le plateau.");
+      return;
+    }
+    if (room.settings.boardMode !== "random") return;
+
+    regenerateBoard(room);
     broadcastLobby(room);
   });
 
@@ -170,7 +222,10 @@ io.on("connection", (socket) => {
     }
 
     room.started = true;
-    room.engine = new GameEngine(room.players.map((p) => p.name), room.settings);
+    room.engine = new GameEngine(room.players.map((p) => p.name), {
+      ...room.settings,
+      customBoard: room.settings.boardMode === "random" ? room.previewBoard : undefined,
+    });
     room.players.forEach((p, index) => {
       room.socketToPlayerId[p.socketId] = index;
     });

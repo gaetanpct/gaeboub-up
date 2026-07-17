@@ -72,6 +72,11 @@ const btnStart = document.getElementById("btn-start");
 btnReady.addEventListener("click", () => socket.emit("room:toggleReady"));
 btnStart.addEventListener("click", () => socket.emit("room:start"));
 
+const boardPreviewPanel = document.getElementById("board-preview-panel");
+const boardPreviewGrid = document.getElementById("board-preview-grid");
+const btnRegenerateBoard = document.getElementById("btn-regenerate-board");
+btnRegenerateBoard.addEventListener("click", () => socket.emit("room:regenerateBoard"));
+
 // ---- Réglages de la partie (Phase 5, généralisé en Phase 8a) ----
 // Le formulaire entier est généré à partir de RULES_SCHEMA (rules-schema.js) :
 // ajouter une règle dans ce schéma suffit à la faire apparaître ici,
@@ -173,6 +178,14 @@ socket.on("room:update", (room) => {
   const isHost = room.hostSocketId === socket.id;
   currentIsHost = isHost;
   renderSettingsForm(room.settings || {});
+
+  if (room.previewBoard) {
+    boardPreviewPanel.hidden = false;
+    ReachUpBoardView.renderPreview(boardPreviewGrid, room.previewBoard);
+  } else {
+    boardPreviewPanel.hidden = true;
+  }
+  btnRegenerateBoard.hidden = !isHost;
 
   btnStart.hidden = !isHost;
   btnStart.disabled = !room.canStart;
@@ -585,6 +598,24 @@ function propertiesModalWireTradeButtons() {
 function renderTradeRow(trade, isIncoming) {
   const fromPlayer = latestGameState.players[trade.fromId];
   const toPlayer = latestGameState.players[trade.toId];
+
+  if (trade.hidden) {
+    // Négociation secrète : on ne connaît pas le contenu, seulement qui propose.
+    // On suppose que les joueurs se sont mis d'accord en dehors du jeu.
+    const description = isIncoming
+      ? `<strong>${fromPlayer.name}</strong> te propose un échange 🤫 <em>(négocié ailleurs — fie-toi à ce que vous avez convenu)</em>`
+      : `À <strong>${toPlayer.name}</strong> : échange en cours 🤫`;
+    const actions = isIncoming
+      ? `<button data-accept-trade="${trade.id}" class="btn-primary">Accepter</button>
+         <button data-reject-trade="${trade.id}">Refuser</button>`
+      : "";
+    return `
+      <div class="property-row">
+        <div class="property-row__info">${description}</div>
+        <div class="property-row__actions">${actions}</div>
+      </div>
+    `;
+  }
 
   const offerNames = trade.offerTiles.map((i) => latestGameState.board[i].name);
   if (trade.offerMoney > 0) offerNames.push(`${trade.offerMoney} 💰`);

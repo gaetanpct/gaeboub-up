@@ -823,3 +823,45 @@ body.is-game-screen .app {
   color: #f2f0f7;
   margin: 0.8rem 0 0.4rem;
 }
+
+/* ============================================================
+   Phase 8b : aperçu du plateau généré (salon d'attente)
+   ============================================================ */
+
+.board-preview-panel {
+  background: #1e1830;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.board-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.board-preview-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #f2f0f7;
+}
+
+.board-preview-header .btn-secondary {
+  width: auto;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.8rem;
+}
+
+.board-grid--preview {
+  position: relative;
+  width: min(100%, 360px);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  background: #0e0b17;
+  border-radius: 8px;
+  padding: 3px;
+  gap: 1px;
+  display: grid;
+}
