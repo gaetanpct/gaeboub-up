@@ -10,25 +10,55 @@
 
   <main class="app">
     <h1>Reach Up</h1>
-    <p class="subtitle">Phase 1 — fondation du projet</p>
 
-    <div id="status-box" class="status-box status-disconnected">
-      En attente de connexion au serveur...
-    </div>
+    <!-- Écran d'accueil : choisir un pseudo, créer ou rejoindre un salon -->
+    <section id="screen-home" class="screen">
+      <label for="input-name">Ton pseudo</label>
+      <input id="input-name" type="text" placeholder="Ton pseudo" maxlength="20" />
 
-    <p class="players-count">
-      Joueurs connectés en ce moment : <span id="players-count">0</span>
-    </p>
+      <button id="btn-create" class="btn-primary">Créer une partie</button>
 
-    <p class="players-count">
-      <a href="test-phase2.html" style="color:#a6f2c1;">
-        → Tester le moteur du jeu (Phase 2, sans réseau)
-      </a>
-    </p>
+      <p class="or-separator">— ou —</p>
+
+      <div class="join-row">
+        <input id="input-code" type="text" placeholder="Code du salon" maxlength="4" />
+        <button id="btn-join">Rejoindre</button>
+      </div>
+
+      <p id="home-error" class="error-text"></p>
+
+      <p class="footer-link">
+        <a href="test-phase2.html">→ Tester le moteur du jeu en solo (outil de debug)</a>
+      </p>
+    </section>
+
+    <!-- Écran salon d'attente -->
+    <section id="screen-lobby" class="screen" hidden>
+      <p class="lobby-code-line">
+        Code du salon à partager : <strong id="lobby-code">----</strong>
+      </p>
+
+      <div id="lobby-players" class="players-panel"></div>
+
+      <div class="test-controls">
+        <button id="btn-ready" class="btn-primary">Je suis prêt</button>
+        <button id="btn-start" hidden>Démarrer la partie</button>
+      </div>
+
+      <p id="lobby-error" class="error-text"></p>
+    </section>
+
+    <!-- Écran de jeu -->
+    <section id="screen-game" class="screen" hidden>
+      <div id="players-panel" class="players-panel"></div>
+
+      <div id="action-area" class="action-area"></div>
+
+      <h2 class="log-title">Journal de la partie</h2>
+      <div id="log-panel" class="log-panel"></div>
+    </section>
   </main>
 
-  <!-- Cette librairie est fournie automatiquement par Socket.io côté serveur,
-       pas besoin de la télécharger ni de l'installer. -->
   <script src="/socket.io/socket.io.js"></script>
   <script src="game.js"></script>
 </body>

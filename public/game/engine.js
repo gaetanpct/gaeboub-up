@@ -1,18 +1,17 @@
 // ============================================================
 // REACH UP — Moteur du jeu
-// Phase 2 : règles principales, déplacements, tours, conditions de victoire
+// Phase 2 : règles principales (dés, achats, loyers, prison, victoire)
+// Phase 3 : le moteur devient "pilotable pas à pas" (roll / decide),
+//           pour pouvoir être contrôlé en direct par de vrais joueurs
+//           humains via le serveur, au lieu de tourner tout seul.
 //
-// Ce moteur ne sait RIEN du réseau ni de Socket.io. C'est volontaire :
-// on veut pouvoir tester/valider les règles toutes seules, en local,
-// avant de les brancher au multijoueur (Phase 3).
+// Ce moteur ne sait toujours RIEN du réseau ni de Socket.io — c'est le
+// serveur (server.js) qui l'utilise et qui parle aux navigateurs.
 //
 // Non inclus pour l'instant (arrivera dans une phase ultérieure) :
 //   - construction de maisons/hôtels
 //   - hypothèque, vente, échanges entre joueurs
 //   - enchères quand un joueur refuse d'acheter
-// Sans ça, l'achat de propriété est "acheter ou laisser passer",
-// et un joueur en faillite perd simplement ses propriétés (elles
-// redeviennent libres), sans enchère pour l'instant.
 // ============================================================
 
 (function (root, factory) {
@@ -35,12 +34,13 @@
      * @param {string[]} playerNames
      * @param {object} [options]
      * @param {function} [options.decideBuy] - (player, tile) => boolean.
-     *   Par défaut : achète si ça laisse au moins 100 en réserve.
-     *   Sera remplacé par un vrai choix humain en Phase 3/4.
+     *   Utilisé uniquement par playTurn() (mode automatique/test).
+     *   En mode interactif (Phase 3), c'est decide() qui reçoit le vrai
+     *   choix du joueur humain, decideBuy n'est alors jamais appelé.
      */
     constructor(playerNames, options = {}) {
-      // On clone le plateau à chaque partie (chaque partie a ses propres
-      // propriétaires), pour ne jamais modifier le modèle partagé.
+      // On clone le plateau à chaque partie : chaque partie a ses propres
+      // propriétaires, sans jamais modifier le modèle partagé (BOARD_TEMPLATE).
       this.board = BOARD_TEMPLATE.map((tile) => ({ ...tile }));
 
       this.players = playerNames.map((name, id) => ({
@@ -59,10 +59,16 @@
         ((player, tile) => player.money - tile.price >= 100);
 
       this.currentPlayerIndex = 0;
-      this.turnNumber = 0;
+      this.turnNumber = 1;
       this.log = [];
       this.gameOver = false;
       this.winner = null;
+
+      // État "pas à pas", utilisé par le mode interactif (Phase 3+)
+      this.doublesStreak = 0;
+      this.pendingDecision = null; // { type: "buy", tileIndex, playerId }
+      this._pendingDiceWasDouble = false;
+      this._turnBannerLogged = false;
     }
 
     addLog(message) {
@@ -110,11 +116,14 @@
       return tilesOfGroup.every((t) => t.owner === playerId);
     }
 
+    // Résout une case qui n'a besoin d'AUCUNE décision humaine
+    // (loyer, taxe, carte destin, prison...). L'achat d'une case libre
+    // est géré séparément par roll()/decide(), pas ici.
     resolveTile(player, tile, diceSum) {
       switch (tile.type) {
         case "property": {
           if (tile.owner === null) {
-            this.offerPurchase(player, tile);
+            this.addLog(`${player.name} n'a pas assez d'argent pour acheter ${tile.name}.`);
           } else if (tile.owner !== player.id) {
             let rent = tile.rent;
             if (this.ownsFullSet(tile.owner, tile.group)) rent *= 2;
@@ -126,7 +135,7 @@
         }
         case "airport": {
           if (tile.owner === null) {
-            this.offerPurchase(player, tile);
+            this.addLog(`${player.name} n'a pas assez d'argent pour acheter ${tile.name}.`);
           } else if (tile.owner !== player.id) {
             const owner = this.players[tile.owner];
             const count = this.board.filter((t) => t.type === "airport" && t.owner === tile.owner).length;
@@ -139,7 +148,7 @@
         }
         case "utility": {
           if (tile.owner === null) {
-            this.offerPurchase(player, tile);
+            this.addLog(`${player.name} n'a pas assez d'argent pour acheter ${tile.name}.`);
           } else if (tile.owner !== player.id) {
             const owner = this.players[tile.owner];
             const count = this.board.filter((t) => t.type === "utility" && t.owner === tile.owner).length;
@@ -171,16 +180,11 @@
       }
     }
 
-    offerPurchase(player, tile) {
-      if (player.money < tile.price) return; // ne peut pas se le permettre
-      const wantsToBuy = this.decideBuy(player, tile);
-      if (wantsToBuy) {
-        this.pay(player, null, tile.price);
-        tile.owner = player.id;
-        this.addLog(`${player.name} achète ${tile.name} pour ${tile.price}.`);
-      } else {
-        this.addLog(`${player.name} ne rachète pas ${tile.name}.`);
-      }
+    // Une case "nécessite une décision" seulement si elle est achetable,
+    // libre, ET que le joueur a les moyens de se la payer.
+    _tileNeedsDecision(player, tile) {
+      const ownableTypes = ["property", "airport", "utility"];
+      return ownableTypes.includes(tile.type) && tile.owner === null && player.money >= tile.price;
     }
 
     checkBankruptcy(player) {
@@ -207,84 +211,185 @@
       do {
         this.currentPlayerIndex = (this.currentPlayerIndex + 1) % this.players.length;
       } while (this.players[this.currentPlayerIndex].bankrupt);
+      this.doublesStreak = 0;
+      this.turnNumber += 1;
+      this._turnBannerLogged = false;
     }
 
-    // Joue le tour complet du joueur courant (y compris les relances en cas de double).
-    playTurn() {
+    // Tentative de sortie de prison (carte, double, ou 3e tour = amende).
+    // Renvoie true si le joueur est maintenant libre de jouer ce tour,
+    // false si son tour s'arrête ici (toujours en prison).
+    _attemptJailExit(player) {
+      if (player.jailFreeCards > 0) {
+        player.jailFreeCards -= 1;
+        player.inJail = false;
+        this.addLog(`${player.name} utilise une carte "sortie de prison gratuite".`);
+        return true;
+      }
+      const [d1, d2] = this.rollDice();
+      this.addLog(`${player.name} lance les dés en prison : ${d1} et ${d2}.`);
+      if (d1 === d2) {
+        player.inJail = false;
+        this.addLog(`Double ! ${player.name} sort de prison.`);
+        return true;
+      }
+      player.jailTurns += 1;
+      if (player.jailTurns >= MAX_JAIL_TURNS) {
+        this.pay(player, null, JAIL_FINE);
+        player.inJail = false;
+        this.addLog(`${player.name} paie l'amende de ${JAIL_FINE} et sort de prison.`);
+        return true;
+      }
+      this.addLog(`${player.name} reste en prison.`);
+      return false;
+    }
+
+    // Ce qui se passe une fois qu'un lancer est totalement résolu
+    // (achat décidé ou pas de décision nécessaire) : faillite, victoire,
+    // puis "rejoue" (double) ou "tour suivant".
+    _afterRollResolved(isDouble) {
+      const player = this.currentPlayer();
+      this.checkBankruptcy(player);
+      this.checkVictory();
       if (this.gameOver) return;
+
+      if (isDouble && !player.inJail && !player.bankrupt) {
+        // Le même joueur rejoue : on ne touche pas à currentPlayerIndex.
+        return;
+      }
+      this.nextPlayer();
+    }
+
+    // ---- API "pas à pas", pilotée depuis l'extérieur (serveur ou test) ----
+
+    // Fait jouer UN lancer de dés au joueur courant. À utiliser à chaque
+    // clic sur "Lancer les dés". Peut se terminer en attente d'une
+    // décision d'achat (this.pendingDecision devient non-null).
+    roll() {
+      if (this.gameOver || this.pendingDecision) return;
       const player = this.currentPlayer();
       if (player.bankrupt) {
         this.nextPlayer();
         return;
       }
 
-      this.turnNumber += 1;
-      this.addLog(`--- Tour ${this.turnNumber} : ${player.name} ---`);
+      if (!this._turnBannerLogged) {
+        this.addLog(`--- Tour ${this.turnNumber} : ${player.name} ---`);
+        this._turnBannerLogged = true;
+      }
 
-      // Gestion de la prison
       if (player.inJail) {
-        if (player.jailFreeCards > 0) {
-          player.jailFreeCards -= 1;
-          player.inJail = false;
-          this.addLog(`${player.name} utilise une carte "sortie de prison gratuite".`);
-        } else {
-          const [d1, d2] = this.rollDice();
-          this.addLog(`${player.name} lance les dés en prison : ${d1} et ${d2}.`);
-          if (d1 === d2) {
-            player.inJail = false;
-            this.addLog(`Double ! ${player.name} sort de prison.`);
-          } else {
-            player.jailTurns += 1;
-            if (player.jailTurns >= MAX_JAIL_TURNS) {
-              this.pay(player, null, JAIL_FINE);
-              player.inJail = false;
-              this.addLog(`${player.name} paie l'amende de ${JAIL_FINE} et sort de prison.`);
-            } else {
-              this.addLog(`${player.name} reste en prison.`);
-              this.checkBankruptcy(player);
-              this.checkVictory();
-              if (!this.gameOver) this.nextPlayer();
-              return; // le tour s'arrête ici, pas de déplacement
-            }
-          }
-        }
-      }
-
-      // Lancers de dés (avec gestion des doubles répétés)
-      let doublesInARow = 0;
-      let lastDiceSum = 0;
-      let keepRolling = true;
-
-      while (keepRolling && !player.bankrupt) {
-        const [d1, d2] = this.rollDice();
-        lastDiceSum = d1 + d2;
-        const isDouble = d1 === d2;
-        this.addLog(`${player.name} lance les dés : ${d1} et ${d2}${isDouble ? " (double !)" : ""}.`);
-
-        if (isDouble) doublesInARow += 1;
-
-        if (isDouble && doublesInARow >= 3) {
-          this.addLog(`${player.name} fait trois doubles d'affilée : direction la prison !`);
-          this.sendToJail(player);
-          keepRolling = false;
-          break;
-        }
-
-        const newPosition = (player.position + lastDiceSum) % this.board.length;
-        this.moveTo(player, newPosition, true);
-        const tile = this.board[player.position];
-        this.addLog(`${player.name} arrive sur "${tile.name}".`);
-        this.resolveTile(player, tile, lastDiceSum);
-
+        const freed = this._attemptJailExit(player);
         this.checkBankruptcy(player);
-        if (player.bankrupt) break;
-
-        // Un double donne un nouveau lancer, sauf si on vient d'être envoyé en prison
-        keepRolling = isDouble && !player.inJail;
+        this.checkVictory();
+        if (!this.gameOver && !freed) {
+          this.nextPlayer();
+        }
+        // Si freed === true, le joueur garde son tour : il doit rappeler
+        // roll() pour effectuer son déplacement (comportement volontaire,
+        // cf. explications de la Phase 3).
+        return;
       }
 
-      this.checkVictory();
-      if (!this.gameOver) this.nextPlayer();
+      const [d1, d2] = this.rollDice();
+      const isDouble = d1 === d2;
+      const sum = d1 + d2;
+      this.addLog(`${player.name} lance les dés : ${d1} et ${d2}${isDouble ? " (double !)" : ""}.`);
+
+      this.doublesStreak = isDouble ? this.doublesStreak + 1 : 0;
+
+      if (isDouble && this.doublesStreak >= 3) {
+        this.addLog(`${player.name} fait trois doubles d'affilée : direction la prison !`);
+        this.sendToJail(player);
+        this.nextPlayer();
+        return;
+      }
+
+      const newPosition = (player.position + sum) % this.board.length;
+      this.moveTo(player, newPosition, true);
+      const tile = this.board[player.position];
+      this.addLog(`${player.name} arrive sur "${tile.name}".`);
+
+      if (this._tileNeedsDecision(player, tile)) {
+        this.pendingDecision = { type: "buy", tileIndex: player.position, playerId: player.id };
+        this._pendingDiceWasDouble = isDouble;
+        return; // on attend maintenant un appel à decide()
+      }
+
+      this.resolveTile(player, tile, sum);
+      this._afterRollResolved(isDouble);
+    }
+
+    // Répond à une décision d'achat en attente. playerId doit correspondre
+    // au joueur concerné par pendingDecision (sécurité côté serveur en plus).
+    decide(playerId, buy) {
+      if (!this.pendingDecision || this.pendingDecision.playerId !== playerId) return;
+      const tile = this.board[this.pendingDecision.tileIndex];
+      const player = this.players[playerId];
+
+      if (buy) {
+        this.pay(player, null, tile.price);
+        tile.owner = player.id;
+        this.addLog(`${player.name} achète ${tile.name} pour ${tile.price}.`);
+      } else {
+        this.addLog(`${player.name} ne rachète pas ${tile.name}.`);
+      }
+
+      const wasDouble = this._pendingDiceWasDouble;
+      this.pendingDecision = null;
+      this._pendingDiceWasDouble = false;
+      this._afterRollResolved(wasDouble);
+    }
+
+    // Snapshot complet et public de l'état de la partie (aucune information
+    // cachée dans ce jeu, donc pas besoin de vues différentes par joueur).
+    getPublicState() {
+      return {
+        turnNumber: this.turnNumber,
+        currentPlayerIndex: this.currentPlayerIndex,
+        pendingDecision: this.pendingDecision,
+        gameOver: this.gameOver,
+        winner: this.winner ? { id: this.winner.id, name: this.winner.name } : null,
+        players: this.players.map((p) => ({
+          id: p.id,
+          name: p.name,
+          position: p.position,
+          money: p.money,
+          inJail: p.inJail,
+          jailTurns: p.jailTurns,
+          jailFreeCards: p.jailFreeCards,
+          bankrupt: p.bankrupt,
+        })),
+        board: this.board.map((t) => ({
+          type: t.type,
+          name: t.name,
+          group: t.group || null,
+          price: t.price || null,
+          rent: t.rent || null,
+          owner: t.owner === undefined ? null : t.owner,
+        })),
+        log: this.log.slice(-80),
+      };
+    }
+
+    // ---- Mode automatique (utilisé par la page de test solo, Phase 2) ----
+    // Joue le tour complet du joueur courant, y compris les relances en cas
+    // de double, en utilisant decideBuy() pour les achats au lieu d'attendre
+    // un vrai humain. Repose entièrement sur roll()/decide() ci-dessus :
+    // c'est la MÊME logique de règles que le mode interactif.
+    playTurn() {
+      if (this.gameOver) return;
+      const startingIndex = this.currentPlayerIndex;
+      do {
+        if (this.pendingDecision) {
+          const tile = this.board[this.pendingDecision.tileIndex];
+          const player = this.players[this.pendingDecision.playerId];
+          const wantsToBuy = this.decideBuy(player, tile);
+          this.decide(this.pendingDecision.playerId, wantsToBuy);
+        } else {
+          this.roll();
+        }
+      } while (!this.gameOver && this.currentPlayerIndex === startingIndex);
     }
   }
 

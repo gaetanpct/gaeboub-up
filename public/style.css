@@ -1,5 +1,9 @@
-/* Phase 1 : style minimal, juste pour que ce soit lisible.
-   Le design final arrivera en Phase 6. */
+/* ============================================================
+   REACH UP — Styles
+   Phase 3 : écran d'accueil, salon d'attente, écran de jeu.
+   Le design définitif arrivera en Phase 6 (finition) — on reste
+   volontairement sobre pour l'instant.
+   ============================================================ */
 
 * {
   box-sizing: border-box;
@@ -9,61 +13,133 @@ body {
   margin: 0;
   min-height: 100vh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   background: #130f1d;
   color: #f2f0f7;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 2rem 1rem;
 }
 
 .app {
+  width: 100%;
+  max-width: 720px;
   text-align: center;
-  padding: 2rem;
-  max-width: 420px;
 }
 
 h1 {
-  margin-bottom: 0.25rem;
+  margin-bottom: 1.5rem;
 }
 
-.subtitle {
-  color: #9d94b3;
-  margin-top: 0;
-  margin-bottom: 2rem;
-}
-
-.status-box {
-  padding: 1rem;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: background-color 0.2s ease;
-}
-
-.status-disconnected {
-  background: #3a2230;
-  color: #ffb4c6;
-}
-
-.status-connected {
-  background: #1f3a2b;
-  color: #a6f2c1;
-}
-
-.players-count {
-  margin-top: 1.5rem;
+.log-title {
+  font-size: 1rem;
   color: #cfc9de;
-}
-
-/* ---- Ajouts Phase 2 : page de test du moteur de jeu ---- */
-
-.app--wide {
-  max-width: 720px;
   text-align: left;
 }
 
-.app--wide h1,
-.app--wide .subtitle {
+/* ---- Écran d'accueil ---- */
+
+.screen {
+  text-align: left;
+}
+
+#screen-home {
+  max-width: 360px;
+  margin: 0 auto;
   text-align: center;
+}
+
+#screen-home label {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: #cfc9de;
+}
+
+#screen-home input {
+  width: 100%;
+  padding: 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #3a3350;
+  background: #1e1830;
+  color: #f2f0f7;
+  margin-bottom: 0.75rem;
+  font-size: 1rem;
+}
+
+.or-separator {
+  color: #6f6788;
+  margin: 0.75rem 0;
+}
+
+.join-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.join-row input {
+  text-transform: uppercase;
+  text-align: center;
+  letter-spacing: 0.2em;
+}
+
+.footer-link {
+  margin-top: 2rem;
+  font-size: 0.85rem;
+}
+
+.footer-link a {
+  color: #9d94b3;
+}
+
+.error-text {
+  color: #ffb4c6;
+  min-height: 1.2em;
+  margin-top: 0.5rem;
+}
+
+/* ---- Boutons ---- */
+
+button {
+  background: #2a2340;
+  color: #f2f0f7;
+  border: none;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+button:hover {
+  background: #352c4f;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #6c4fd6;
+  width: 100%;
+}
+
+.btn-primary:hover {
+  background: #7d5ff0;
+}
+
+/* ---- Salon d'attente ---- */
+
+.lobby-code-line {
+  text-align: center;
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+}
+
+.lobby-code-line strong {
+  color: #ffd76a;
+  letter-spacing: 0.2em;
+  font-size: 1.3rem;
 }
 
 .test-controls {
@@ -71,22 +147,10 @@ h1 {
   flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: center;
-  margin-bottom: 1.5rem;
+  margin: 1rem 0;
 }
 
-.test-controls button {
-  background: #6c4fd6;
-  color: #fff;
-  border: none;
-  padding: 0.6rem 1rem;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.test-controls button:hover {
-  background: #7d5ff0;
-}
+/* ---- Cartes joueurs (salon + jeu) ---- */
 
 .players-panel {
   display: grid;
@@ -99,16 +163,22 @@ h1 {
   background: #1e1830;
   border-radius: 8px;
   padding: 0.75rem 1rem;
+  border: 2px solid transparent;
 }
 
 .player-card h3 {
   margin: 0 0 0.25rem;
+  font-size: 1rem;
 }
 
 .player-card p {
   margin: 0.15rem 0;
   font-size: 0.9rem;
   color: #cfc9de;
+}
+
+.player-card--current {
+  border-color: #6c4fd6;
 }
 
 .player-card--bankrupt {
@@ -130,10 +200,29 @@ h1 {
   text-align: center;
 }
 
-.log-title {
-  font-size: 1rem;
-  color: #cfc9de;
+/* ---- Zone d'action (dés / achat / attente) ---- */
+
+.action-area {
+  margin-bottom: 1.5rem;
 }
+
+.action-box {
+  background: #1e1830;
+  border-radius: 8px;
+  padding: 1rem;
+  text-align: center;
+}
+
+.action-box button {
+  margin: 0.25rem;
+}
+
+.action-box--waiting {
+  color: #9d94b3;
+  font-style: italic;
+}
+
+/* ---- Journal de partie ---- */
 
 .log-panel {
   background: #0e0b17;

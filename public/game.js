@@ -1,29 +1,208 @@
 // ============================================================
 // REACH UP — Code côté navigateur
-// Phase 1 : on vérifie juste que la connexion temps réel marche.
-// La logique du jeu (plateau, dés...) arrivera en Phase 2.
+// Phase 3 : écran d'accueil, salon d'attente, puis partie en direct.
+// Ce fichier ne connaît AUCUNE règle du jeu : il affiche l'état que
+// le serveur lui envoie, et transmet les intentions du joueur
+// (lancer les dés, acheter...) — toute la vérité vient du serveur.
 // ============================================================
 
-const socket = io(); // se connecte automatiquement au serveur qui a servi cette page
+const socket = io();
 
-const statusBox = document.getElementById("status-box");
-const playersCountEl = document.getElementById("players-count");
+let myPlayerId = null;
 
-// Le serveur envoie cet événement dès que la connexion est établie
-socket.on("server:welcome", (data) => {
-  statusBox.textContent = data.message;
-  statusBox.classList.remove("status-disconnected");
-  statusBox.classList.add("status-connected");
+// ---- Gestion des écrans ----
+const screens = {
+  home: document.getElementById("screen-home"),
+  lobby: document.getElementById("screen-lobby"),
+  game: document.getElementById("screen-game"),
+};
+function showScreen(name) {
+  Object.entries(screens).forEach(([key, el]) => {
+    el.hidden = key !== name;
+  });
+}
+
+// ============================================================
+// Écran d'accueil
+// ============================================================
+const inputName = document.getElementById("input-name");
+const inputCode = document.getElementById("input-code");
+const btnCreate = document.getElementById("btn-create");
+const btnJoin = document.getElementById("btn-join");
+const homeError = document.getElementById("home-error");
+
+btnCreate.addEventListener("click", () => {
+  homeError.textContent = "";
+  socket.emit("room:create", { name: inputName.value });
 });
 
-// Le serveur envoie cet événement à chaque fois qu'un joueur se connecte/déconnecte
-socket.on("server:players-count", (data) => {
-  playersCountEl.textContent = data.count;
+btnJoin.addEventListener("click", () => {
+  const code = inputCode.value.trim().toUpperCase();
+  if (!code) {
+    homeError.textContent = "Entre le code du salon à rejoindre.";
+    return;
+  }
+  homeError.textContent = "";
+  socket.emit("room:join", { name: inputName.value, code });
 });
 
-// Si la connexion tombe (ex: coupure réseau), on prévient l'utilisateur
-socket.on("disconnect", () => {
-  statusBox.textContent = "Connexion perdue. Tentative de reconnexion...";
-  statusBox.classList.remove("status-connected");
-  statusBox.classList.add("status-disconnected");
+socket.on("room:error", (message) => {
+  if (!screens.home.hidden) {
+    homeError.textContent = message;
+  } else if (!screens.lobby.hidden) {
+    document.getElementById("lobby-error").textContent = message;
+  }
 });
+
+// ============================================================
+// Écran salon d'attente
+// ============================================================
+const lobbyCodeEl = document.getElementById("lobby-code");
+const lobbyPlayersEl = document.getElementById("lobby-players");
+const btnReady = document.getElementById("btn-ready");
+const btnStart = document.getElementById("btn-start");
+
+btnReady.addEventListener("click", () => socket.emit("room:toggleReady"));
+btnStart.addEventListener("click", () => socket.emit("room:start"));
+
+socket.on("room:update", (room) => {
+  showScreen("lobby");
+  document.getElementById("lobby-error").textContent = "";
+  lobbyCodeEl.textContent = room.code;
+
+  lobbyPlayersEl.innerHTML = "";
+  room.players.forEach((p) => {
+    const isHost = p.socketId === room.hostSocketId;
+    const isMe = p.socketId === socket.id;
+
+    const card = document.createElement("div");
+    card.className = "player-card";
+    card.innerHTML = `
+      <h3>${p.name}${isMe ? " (toi)" : ""}${isHost ? " 👑" : ""}</h3>
+      <p class="player-status">${p.ready ? "✅ Prêt" : "⏳ Pas prêt"}</p>
+    `;
+    lobbyPlayersEl.appendChild(card);
+  });
+
+  const isHost = room.hostSocketId === socket.id;
+  btnStart.hidden = !isHost;
+  btnStart.disabled = !room.canStart;
+});
+
+// ============================================================
+// Écran de jeu
+// ============================================================
+const playersPanel = document.getElementById("players-panel");
+const actionArea = document.getElementById("action-area");
+const logPanel = document.getElementById("log-panel");
+
+socket.on("game:started", ({ state, socketToPlayerId }) => {
+  myPlayerId = socketToPlayerId[socket.id];
+  showScreen("game");
+  renderGame(state);
+});
+
+socket.on("game:update", ({ state }) => {
+  renderGame(state);
+});
+
+function renderGame(state) {
+  renderPlayers(state);
+  renderActionArea(state);
+  renderLog(state);
+}
+
+function renderPlayers(state) {
+  playersPanel.innerHTML = "";
+
+  state.players.forEach((player) => {
+    const tile = state.board[player.position];
+    const propertiesCount = state.board.filter((t) => t.owner === player.id).length;
+
+    let statusLabel = "Actif";
+    if (player.bankrupt) statusLabel = "En faillite";
+    else if (player.inJail) statusLabel = "En prison";
+
+    const isCurrent = !state.gameOver && state.currentPlayerIndex === player.id;
+
+    const card = document.createElement("div");
+    card.className = "player-card";
+    if (player.bankrupt) card.classList.add("player-card--bankrupt");
+    if (isCurrent) card.classList.add("player-card--current");
+
+    card.innerHTML = `
+      <h3>${player.name}${player.id === myPlayerId ? " (toi)" : ""}</h3>
+      <p>💰 ${player.money}</p>
+      <p>📍 ${tile.name}</p>
+      <p>🏷️ ${propertiesCount} propriété(s)</p>
+      <p class="player-status">${statusLabel}</p>
+    `;
+    playersPanel.appendChild(card);
+  });
+
+  if (state.gameOver) {
+    const banner = document.createElement("div");
+    banner.className = "winner-banner";
+    banner.textContent = `🏆 ${state.winner.name} remporte la partie !`;
+    playersPanel.appendChild(banner);
+  }
+}
+
+function renderActionArea(state) {
+  actionArea.innerHTML = "";
+  if (state.gameOver) return;
+
+  // Cas 1 : quelqu'un doit décider d'acheter ou non
+  if (state.pendingDecision) {
+    if (state.pendingDecision.playerId === myPlayerId) {
+      const tile = state.board[state.pendingDecision.tileIndex];
+      const box = document.createElement("div");
+      box.className = "action-box";
+      box.innerHTML = `
+        <p>Acheter <strong>${tile.name}</strong> pour <strong>${tile.price}</strong> ?</p>
+        <button id="btn-buy" class="btn-primary">Acheter</button>
+        <button id="btn-pass">Passer</button>
+      `;
+      actionArea.appendChild(box);
+      document.getElementById("btn-buy").addEventListener("click", () => {
+        socket.emit("game:buyDecision", { buy: true });
+      });
+      document.getElementById("btn-pass").addEventListener("click", () => {
+        socket.emit("game:buyDecision", { buy: false });
+      });
+    } else {
+      const waitingPlayer = state.players[state.pendingDecision.playerId];
+      showWaitingBox(`En attente de la décision d'achat de ${waitingPlayer.name}...`);
+    }
+    return;
+  }
+
+  // Cas 2 : c'est mon tour de lancer les dés
+  const isMyTurn = state.currentPlayerIndex === myPlayerId;
+  if (isMyTurn) {
+    const box = document.createElement("div");
+    box.className = "action-box";
+    box.innerHTML = `<button id="btn-roll" class="btn-primary">🎲 Lancer les dés</button>`;
+    actionArea.appendChild(box);
+    document.getElementById("btn-roll").addEventListener("click", () => {
+      socket.emit("game:roll");
+    });
+    return;
+  }
+
+  // Cas 3 : c'est le tour de quelqu'un d'autre
+  const currentName = state.players[state.currentPlayerIndex].name;
+  showWaitingBox(`En attente du tour de ${currentName}...`);
+}
+
+function showWaitingBox(text) {
+  const box = document.createElement("div");
+  box.className = "action-box action-box--waiting";
+  box.textContent = text;
+  actionArea.appendChild(box);
+}
+
+function renderLog(state) {
+  logPanel.innerHTML = state.log.map((line) => `<div>${line}</div>`).join("");
+  logPanel.scrollTop = logPanel.scrollHeight;
+}
