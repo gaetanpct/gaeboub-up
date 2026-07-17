@@ -395,3 +395,188 @@ button:disabled {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
   z-index: 2;
 }
+
+/* ============================================================
+   Phase 5 : personnalisation + écran de jeu sur un seul écran (sans scroll)
+   ============================================================ */
+
+/* ---- Réglages de la partie (salon d'attente) ---- */
+
+.settings-panel {
+  background: #1e1830;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.settings-panel h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  color: #f2f0f7;
+}
+
+.settings-panel label {
+  display: block;
+  margin-bottom: 0.6rem;
+  color: #cfc9de;
+  font-size: 0.85rem;
+}
+
+.settings-panel select {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.4rem;
+  border-radius: 6px;
+  border: 1px solid #3a3350;
+  background: #130f1d;
+  color: #f2f0f7;
+}
+
+.checkbox-label {
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.settings-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #6f6788;
+  font-style: italic;
+}
+
+/* ---- Écran de jeu : tient sur un seul écran, sans scroll de page ---- */
+
+body.is-game-screen {
+  padding: 0;
+  align-items: stretch;
+  justify-content: stretch;
+  overflow: hidden;
+  height: 100vh;
+  height: 100dvh;
+}
+
+body.is-game-screen .app {
+  display: none;
+}
+
+.screen-game {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.game-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.game-layout .board-container {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-layout .board-grid {
+  width: min(72vh, 44vw, 620px);
+}
+
+.game-sidebar {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow: hidden;
+}
+
+.players-panel--compact {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
+.players-panel--compact .player-card {
+  flex: 1 1 140px;
+  padding: 0.5rem 0.7rem;
+}
+
+.players-panel--compact .player-card h3 {
+  font-size: 0.9rem;
+}
+
+.players-panel--compact .player-card p {
+  font-size: 0.8rem;
+  margin: 0.1rem 0;
+}
+
+.game-sidebar .action-area {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+}
+
+.log-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.log-wrap .log-title {
+  flex: 0 0 auto;
+  margin: 0 0 0.3rem;
+}
+
+.log-wrap .log-panel {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.pot-indicator {
+  font-size: 0.7rem;
+  color: #ffd76a;
+  text-align: center;
+  padding: 0 0.5rem;
+  min-height: 1em;
+}
+
+/* En dessous de 900px de large (mobile/tablette), on empile le plateau
+   et la barre latérale au lieu de les mettre côte à côte. Le plateau
+   se redimensionne pour laisser de la place au reste. */
+@media (max-width: 900px) {
+  .game-layout {
+    flex-direction: column;
+  }
+
+  .game-layout .board-grid {
+    width: min(90vw, 46vh, 480px);
+    margin: 0 auto;
+  }
+
+  .game-sidebar {
+    flex: 1;
+    min-height: 0;
+  }
+}

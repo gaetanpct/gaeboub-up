@@ -20,6 +20,9 @@ function showScreen(name) {
   Object.entries(screens).forEach(([key, el]) => {
     el.hidden = key !== name;
   });
+  // L'écran de jeu utilise une mise en page plein écran spéciale (Phase 5)
+  // pour que tout tienne sans avoir à scroller.
+  document.body.classList.toggle("is-game-screen", name === "game");
 }
 
 // ============================================================
@@ -65,6 +68,41 @@ const btnStart = document.getElementById("btn-start");
 btnReady.addEventListener("click", () => socket.emit("room:toggleReady"));
 btnStart.addEventListener("click", () => socket.emit("room:start"));
 
+// ---- Réglages de la partie (Phase 5) ----
+const settingInputs = {
+  startingMoney: document.getElementById("setting-startingMoney"),
+  salary: document.getElementById("setting-salary"),
+  vacationPot: document.getElementById("setting-vacationPot"),
+  turnLimit: document.getElementById("setting-turnLimit"),
+};
+
+function emitSettingsChange() {
+  socket.emit("room:updateSettings", {
+    startingMoney: Number(settingInputs.startingMoney.value),
+    salary: Number(settingInputs.salary.value),
+    vacationPot: settingInputs.vacationPot.checked,
+    turnLimit: settingInputs.turnLimit.value ? Number(settingInputs.turnLimit.value) : null,
+  });
+}
+
+Object.values(settingInputs).forEach((el) => {
+  el.addEventListener("change", emitSettingsChange);
+});
+
+function applySettingsToInputs(settings) {
+  if (!settings) return;
+  const moneyStr = String(settings.startingMoney);
+  if (settingInputs.startingMoney.value !== moneyStr) settingInputs.startingMoney.value = moneyStr;
+
+  const salaryStr = String(settings.salary);
+  if (settingInputs.salary.value !== salaryStr) settingInputs.salary.value = salaryStr;
+
+  settingInputs.vacationPot.checked = !!settings.vacationPot;
+
+  const turnLimitStr = settings.turnLimit ? String(settings.turnLimit) : "";
+  if (settingInputs.turnLimit.value !== turnLimitStr) settingInputs.turnLimit.value = turnLimitStr;
+}
+
 socket.on("room:update", (room) => {
   showScreen("lobby");
   document.getElementById("lobby-error").textContent = "";
@@ -84,7 +122,13 @@ socket.on("room:update", (room) => {
     lobbyPlayersEl.appendChild(card);
   });
 
+  applySettingsToInputs(room.settings);
+
   const isHost = room.hostSocketId === socket.id;
+  Object.values(settingInputs).forEach((el) => {
+    el.disabled = !isHost;
+  });
+
   btnStart.hidden = !isHost;
   btnStart.disabled = !room.canStart;
 });

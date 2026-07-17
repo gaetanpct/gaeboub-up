@@ -55,6 +55,7 @@ function broadcastLobby(room) {
     players: room.players.map((p) => ({ socketId: p.socketId, name: p.name, ready: p.ready })),
     canStart: room.players.length >= MIN_PLAYERS && room.players.every((p) => p.ready),
     maxPlayers: MAX_PLAYERS,
+    settings: room.settings,
   });
 }
 
@@ -74,6 +75,12 @@ io.on("connection", (socket) => {
       engine: null,
       started: false,
       socketToPlayerId: {},
+      settings: {
+        startingMoney: 1500,
+        salary: 200,
+        vacationPot: false,
+        turnLimit: null,
+      },
     };
     rooms.set(code, room);
 
@@ -114,6 +121,33 @@ io.on("connection", (socket) => {
     broadcastLobby(room);
   });
 
+  socket.on("room:updateSettings", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || room.started) return;
+    if (socket.id !== room.hostSocketId) {
+      socket.emit("room:error", "Seul l'hôte peut modifier les réglages.");
+      return;
+    }
+
+    const ALLOWED_MONEY = [1000, 1500, 2000];
+    const ALLOWED_SALARY = [100, 200, 300];
+    const ALLOWED_TURN_LIMITS = [null, 60, 100, 150];
+
+    if (ALLOWED_MONEY.includes(payload.startingMoney)) {
+      room.settings.startingMoney = payload.startingMoney;
+    }
+    if (ALLOWED_SALARY.includes(payload.salary)) {
+      room.settings.salary = payload.salary;
+    }
+    room.settings.vacationPot = !!payload.vacationPot;
+    const turnLimit = payload.turnLimit === null || payload.turnLimit === undefined ? null : Number(payload.turnLimit);
+    if (ALLOWED_TURN_LIMITS.includes(turnLimit)) {
+      room.settings.turnLimit = turnLimit;
+    }
+
+    broadcastLobby(room);
+  });
+
   socket.on("room:start", () => {
     const room = getRoom(socket);
     if (!room || room.started) return;
@@ -132,7 +166,7 @@ io.on("connection", (socket) => {
     }
 
     room.started = true;
-    room.engine = new GameEngine(room.players.map((p) => p.name));
+    room.engine = new GameEngine(room.players.map((p) => p.name), room.settings);
     room.players.forEach((p, index) => {
       room.socketToPlayerId[p.socketId] = index;
     });

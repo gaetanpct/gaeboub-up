@@ -37,17 +37,30 @@
      *   Utilisé uniquement par playTurn() (mode automatique/test).
      *   En mode interactif (Phase 3), c'est decide() qui reçoit le vrai
      *   choix du joueur humain, decideBuy n'est alors jamais appelé.
+     * @param {number} [options.startingMoney] - Argent de départ (Phase 5).
+     * @param {number} [options.salary] - Salaire à chaque passage par Départ (Phase 5).
+     * @param {boolean} [options.vacationPot] - Règle maison : les taxes
+     *   s'accumulent dans une cagnotte, redistribuée à qui tombe sur Vacances (Phase 5).
+     * @param {number|null} [options.turnLimit] - Limite de tours (Phase 5).
+     *   Si atteinte, la partie s'arrête et le joueur avec la plus grande
+     *   valeur totale (argent + propriétés) gagne.
      */
     constructor(playerNames, options = {}) {
       // On clone le plateau à chaque partie : chaque partie a ses propres
       // propriétaires, sans jamais modifier le modèle partagé (BOARD_TEMPLATE).
       this.board = BOARD_TEMPLATE.map((tile) => ({ ...tile }));
 
+      this.salary = options.salary || SALARY;
+      this.vacationPotEnabled = !!options.vacationPot;
+      this.vacationPot = 0;
+      this.turnLimit = options.turnLimit || null;
+
+      const startingMoney = options.startingMoney || STARTING_MONEY;
       this.players = playerNames.map((name, id) => ({
         id,
         name,
         position: 0,
-        money: STARTING_MONEY,
+        money: startingMoney,
         inJail: false,
         jailTurns: 0,
         jailFreeCards: 0,
@@ -103,8 +116,8 @@
       const passedGo = collectSalaryIfPassed && index <= player.position && !(player.position === 0);
       player.position = index;
       if (passedGo) {
-        this.pay(null, player, SALARY);
-        this.addLog(`${player.name} passe par la case Départ et touche ${SALARY}.`);
+        this.pay(null, player, this.salary);
+        this.addLog(`${player.name} passe par la case Départ et touche ${this.salary}.`);
       }
     }
 
@@ -165,7 +178,20 @@
         }
         case "tax": {
           this.pay(player, null, tile.amount);
-          this.addLog(`${player.name} paie ${tile.amount} de taxe (${tile.name}).`);
+          if (this.vacationPotEnabled) {
+            this.vacationPot += tile.amount;
+            this.addLog(`${player.name} paie ${tile.amount} de taxe (${tile.name}) — cagnotte de Vacances : ${this.vacationPot}.`);
+          } else {
+            this.addLog(`${player.name} paie ${tile.amount} de taxe (${tile.name}).`);
+          }
+          break;
+        }
+        case "vacation": {
+          if (this.vacationPotEnabled && this.vacationPot > 0) {
+            this.pay(null, player, this.vacationPot);
+            this.addLog(`🏖️ ${player.name} récupère la cagnotte de Vacances : ${this.vacationPot} !`);
+            this.vacationPot = 0;
+          }
           break;
         }
         case "chance": {
@@ -178,7 +204,7 @@
           this.sendToJail(player);
           break;
         }
-        // "go", "jail" (simple visite), "vacation" : pas d'effet particulier ici
+        // "go", "jail" (simple visite) : pas d'effet particulier ici
         default:
           break;
       }
@@ -209,6 +235,38 @@
         this.winner = active[0];
         this.addLog(`🏆 ${this.winner.name} remporte la partie !`);
       }
+    }
+
+    // Valeur totale d'un joueur : argent en poche + prix d'achat de ses
+    // propriétés (les maisons/hôtels n'existant pas encore, pas de bonus ici).
+    _computeNetWorth(player) {
+      const propertiesValue = this.board
+        .filter((t) => t.owner === player.id)
+        .reduce((sum, t) => sum + (t.price || 0), 0);
+      return player.money + propertiesValue;
+    }
+
+    // Si une limite de tours est configurée (Phase 5) et qu'elle est
+    // atteinte, la partie s'arrête : victoire au joueur de plus grande valeur.
+    checkTurnLimit() {
+      if (!this.turnLimit || this.gameOver) return;
+      if (this.turnNumber < this.turnLimit) return;
+
+      const active = this.activePlayers();
+      let best = active[0];
+      let bestValue = this._computeNetWorth(best);
+      for (const p of active.slice(1)) {
+        const value = this._computeNetWorth(p);
+        if (value > bestValue) {
+          best = p;
+          bestValue = value;
+        }
+      }
+      this.gameOver = true;
+      this.winner = best;
+      this.addLog(
+        `⏱️ Limite de ${this.turnLimit} tours atteinte. 🏆 ${best.name} remporte la partie avec une valeur totale de ${bestValue} !`
+      );
     }
 
     nextPlayer() {
@@ -256,6 +314,7 @@
       const player = this.currentPlayer();
       this.checkBankruptcy(player);
       this.checkVictory();
+      if (!this.gameOver) this.checkTurnLimit();
       if (this.gameOver) return;
 
       if (isDouble && !player.inJail && !player.bankrupt) {
@@ -287,6 +346,7 @@
         const freed = this._attemptJailExit(player);
         this.checkBankruptcy(player);
         this.checkVictory();
+        if (!this.gameOver) this.checkTurnLimit();
         if (!this.gameOver && !freed) {
           this.nextPlayer();
         }
@@ -357,6 +417,8 @@
         gameOver: this.gameOver,
         winner: this.winner ? { id: this.winner.id, name: this.winner.name } : null,
         lastRoll: this.lastRoll,
+        vacationPot: this.vacationPotEnabled ? this.vacationPot : null,
+        turnLimit: this.turnLimit,
         players: this.players.map((p) => ({
           id: p.id,
           name: p.name,

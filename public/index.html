@@ -8,6 +8,7 @@
 </head>
 <body>
 
+  <!-- Accueil et salon d'attente : présentation classique, centrée -->
   <main class="app">
     <h1>Reach Up</h1>
 
@@ -40,6 +41,45 @@
 
       <div id="lobby-players" class="players-panel"></div>
 
+      <div class="settings-panel">
+        <h3>Réglages de la partie</h3>
+
+        <label>
+          Argent de départ
+          <select id="setting-startingMoney">
+            <option value="1000">1000</option>
+            <option value="1500" selected>1500</option>
+            <option value="2000">2000</option>
+          </select>
+        </label>
+
+        <label>
+          Salaire (case Départ)
+          <select id="setting-salary">
+            <option value="100">100</option>
+            <option value="200" selected>200</option>
+            <option value="300">300</option>
+          </select>
+        </label>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="setting-vacationPot" />
+          🏖️ Cagnotte de Vacances (les taxes s'accumulent, Vacances les redistribue)
+        </label>
+
+        <label>
+          Limite de tours
+          <select id="setting-turnLimit">
+            <option value="">Illimité</option>
+            <option value="60">60 tours</option>
+            <option value="100">100 tours</option>
+            <option value="150">150 tours</option>
+          </select>
+        </label>
+
+        <p class="settings-hint">Seul l'hôte peut modifier ces réglages.</p>
+      </div>
+
       <div class="test-controls">
         <button id="btn-ready" class="btn-primary">Je suis prêt</button>
         <button id="btn-start" hidden>Démarrer la partie</button>
@@ -47,21 +87,25 @@
 
       <p id="lobby-error" class="error-text"></p>
     </section>
+  </main>
 
-    <!-- Écran de jeu -->
-    <section id="screen-game" class="screen" hidden>
+  <!-- Écran de jeu : mis en page à part pour tenir sur un seul écran, sans scroll -->
+  <section id="screen-game" class="screen screen-game" hidden>
+    <div class="game-layout">
       <div class="board-container">
         <div id="board-grid" class="board-grid"></div>
       </div>
 
-      <div id="players-panel" class="players-panel"></div>
-
-      <div id="action-area" class="action-area"></div>
-
-      <h2 class="log-title">Journal de la partie</h2>
-      <div id="log-panel" class="log-panel"></div>
-    </section>
-  </main>
+      <aside class="game-sidebar">
+        <div id="players-panel" class="players-panel players-panel--compact"></div>
+        <div id="action-area" class="action-area"></div>
+        <div class="log-wrap">
+          <h2 class="log-title">Journal de la partie</h2>
+          <div id="log-panel" class="log-panel"></div>
+        </div>
+      </aside>
+    </div>
+  </section>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="board-view.js"></script>

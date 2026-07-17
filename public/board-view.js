@@ -127,6 +127,7 @@
       <div class="board-center__title">Reach&nbsp;Up</div>
       <div id="dice-display" class="dice-row"></div>
       <div id="turn-indicator" class="turn-indicator"></div>
+      <div id="pot-indicator" class="pot-indicator"></div>
     `;
     boardEl.appendChild(center);
 
@@ -210,6 +211,18 @@
         const current = state.players[state.currentPlayerIndex];
         const isMe = current.id === myPlayerId;
         turnIndicator.textContent = isMe ? "À toi de jouer !" : `Tour de ${current.name}`;
+      }
+
+      const potIndicator = document.getElementById("pot-indicator");
+      if (potIndicator) {
+        const parts = [];
+        if (state.vacationPot !== null && state.vacationPot !== undefined) {
+          parts.push(`🏖️ Cagnotte : ${state.vacationPot}`);
+        }
+        if (state.turnLimit) {
+          parts.push(`⏱️ Tour ${state.turnNumber}/${state.turnLimit}`);
+        }
+        potIndicator.textContent = parts.join("  •  ");
       }
     }
   }
