@@ -53,3 +53,96 @@ h1 {
   margin-top: 1.5rem;
   color: #cfc9de;
 }
+
+/* ---- Ajouts Phase 2 : page de test du moteur de jeu ---- */
+
+.app--wide {
+  max-width: 720px;
+  text-align: left;
+}
+
+.app--wide h1,
+.app--wide .subtitle {
+  text-align: center;
+}
+
+.test-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+}
+
+.test-controls button {
+  background: #6c4fd6;
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.test-controls button:hover {
+  background: #7d5ff0;
+}
+
+.players-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.player-card {
+  background: #1e1830;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.player-card h3 {
+  margin: 0 0 0.25rem;
+}
+
+.player-card p {
+  margin: 0.15rem 0;
+  font-size: 0.9rem;
+  color: #cfc9de;
+}
+
+.player-card--bankrupt {
+  opacity: 0.5;
+}
+
+.player-status {
+  font-weight: 600;
+  color: #a6f2c1;
+}
+
+.winner-banner {
+  grid-column: 1 / -1;
+  background: #3a2f0f;
+  color: #ffd76a;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.log-title {
+  font-size: 1rem;
+  color: #cfc9de;
+}
+
+.log-panel {
+  background: #0e0b17;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  height: 260px;
+  overflow-y: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #b9b2cc;
+}

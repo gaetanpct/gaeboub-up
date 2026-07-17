@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reach Up — Test du moteur (Phase 2)</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <main class="app app--wide">
+    <h1>Reach Up</h1>
+    <p class="subtitle">
+      Phase 2 — test solo du moteur de jeu (aucun réseau, 3 joueurs simulés)
+    </p>
+
+    <div class="test-controls">
+      <button id="btn-turn">Jouer un tour</button>
+      <button id="btn-turn-10">Jouer 10 tours</button>
+      <button id="btn-turn-end">Jouer jusqu'à la fin</button>
+      <button id="btn-reset">Recommencer une partie</button>
+    </div>
+
+    <div id="players-panel" class="players-panel"></div>
+
+    <h2 class="log-title">Journal de la partie</h2>
+    <div id="log-panel" class="log-panel"></div>
+  </main>
+
+  <script src="game/board.js"></script>
+  <script src="game/engine.js"></script>
+  <script src="test-phase2.js"></script>
+</body>
+</html>
