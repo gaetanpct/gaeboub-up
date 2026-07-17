@@ -99,11 +99,37 @@
       <aside class="game-sidebar">
         <div id="players-panel" class="players-panel players-panel--compact"></div>
         <div id="action-area" class="action-area"></div>
+        <button id="btn-open-properties" class="btn-secondary">🏠 Mes propriétés</button>
+        <button id="btn-open-trade" class="btn-secondary">🤝 Échanges</button>
         <div class="log-wrap">
           <h2 class="log-title">Journal de la partie</h2>
           <div id="log-panel" class="log-panel"></div>
         </div>
       </aside>
+    </div>
+
+    <!-- Fenêtre de gestion des propriétés (construire, hypothéquer...) -->
+    <div id="properties-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2>Mes propriétés</h2>
+          <button id="btn-close-properties" class="btn-close">✕</button>
+        </div>
+        <p id="properties-error" class="error-text"></p>
+        <div id="properties-list" class="properties-list"></div>
+      </div>
+    </div>
+
+    <!-- Fenêtre d'échanges entre joueurs -->
+    <div id="trade-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2>Échanges</h2>
+          <button id="btn-close-trade" class="btn-close">✕</button>
+        </div>
+        <p id="trade-error" class="error-text"></p>
+        <div id="trade-content" class="properties-list"></div>
+      </div>
     </div>
   </section>
 

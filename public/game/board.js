@@ -22,48 +22,70 @@
 
   // type possibles : "go" | "property" | "airport" | "utility" | "tax"
   //                | "chance" | "jail" | "go-to-jail" | "vacation"
+  //
+  // Phase 6 : les propriétés/aéroports/compagnies ont maintenant deux
+  // nouveaux champs :
+  //   - houses : 0 à 4 maisons, 5 = hôtel (uniquement pour "property")
+  //   - mortgaged : hypothéquée ou non (property/airport/utility)
   const BOARD = [
     { type: "go", name: "Départ", short: "DÉPART" },
-    { type: "property", name: "Rue des Lilas", short: "Lilas", group: "marron", price: 60, rent: 2, owner: null },
+    { type: "property", name: "Rue des Lilas", short: "Lilas", group: "marron", price: 60, rent: 2, owner: null, houses: 0, mortgaged: false },
     { type: "chance", name: "Carte Destin", short: "Destin" },
-    { type: "property", name: "Rue des Tilleuls", short: "Tilleuls", group: "marron", price: 60, rent: 4, owner: null },
+    { type: "property", name: "Rue des Tilleuls", short: "Tilleuls", group: "marron", price: 60, rent: 4, owner: null, houses: 0, mortgaged: false },
     { type: "tax", name: "Impôts", short: "Impôts", amount: 200 },
-    { type: "airport", name: "Aéroport Nord", short: "Aéroport N", price: 200, owner: null },
-    { type: "property", name: "Rue de la Gare", short: "Gare", group: "cyan", price: 100, rent: 6, owner: null },
+    { type: "airport", name: "Aéroport Nord", short: "Aéroport N", price: 200, owner: null, mortgaged: false },
+    { type: "property", name: "Rue de la Gare", short: "Gare", group: "cyan", price: 100, rent: 6, owner: null, houses: 0, mortgaged: false },
     { type: "chance", name: "Carte Destin", short: "Destin" },
-    { type: "property", name: "Rue du Port", short: "Port", group: "cyan", price: 100, rent: 6, owner: null },
-    { type: "property", name: "Rue des Docks", short: "Docks", group: "cyan", price: 120, rent: 8, owner: null },
+    { type: "property", name: "Rue du Port", short: "Port", group: "cyan", price: 100, rent: 6, owner: null, houses: 0, mortgaged: false },
+    { type: "property", name: "Rue des Docks", short: "Docks", group: "cyan", price: 120, rent: 8, owner: null, houses: 0, mortgaged: false },
     { type: "jail", name: "Prison / Simple visite", short: "Prison" },
-    { type: "property", name: "Avenue des Roses", short: "Roses", group: "magenta", price: 140, rent: 10, owner: null },
-    { type: "utility", name: "Compagnie des Eaux", short: "Eaux", price: 150, owner: null },
-    { type: "property", name: "Avenue des Tulipes", short: "Tulipes", group: "magenta", price: 140, rent: 10, owner: null },
-    { type: "property", name: "Avenue des Orchidées", short: "Orchidées", group: "magenta", price: 160, rent: 12, owner: null },
-    { type: "airport", name: "Aéroport Est", short: "Aéroport E", price: 200, owner: null },
-    { type: "property", name: "Boulevard du Commerce", short: "Commerce", group: "orange", price: 180, rent: 14, owner: null },
+    { type: "property", name: "Avenue des Roses", short: "Roses", group: "magenta", price: 140, rent: 10, owner: null, houses: 0, mortgaged: false },
+    { type: "utility", name: "Compagnie des Eaux", short: "Eaux", price: 150, owner: null, mortgaged: false },
+    { type: "property", name: "Avenue des Tulipes", short: "Tulipes", group: "magenta", price: 140, rent: 10, owner: null, houses: 0, mortgaged: false },
+    { type: "property", name: "Avenue des Orchidées", short: "Orchidées", group: "magenta", price: 160, rent: 12, owner: null, houses: 0, mortgaged: false },
+    { type: "airport", name: "Aéroport Est", short: "Aéroport E", price: 200, owner: null, mortgaged: false },
+    { type: "property", name: "Boulevard du Commerce", short: "Commerce", group: "orange", price: 180, rent: 14, owner: null, houses: 0, mortgaged: false },
     { type: "chance", name: "Carte Destin", short: "Destin" },
-    { type: "property", name: "Boulevard des Arts", short: "Arts", group: "orange", price: 180, rent: 14, owner: null },
-    { type: "property", name: "Boulevard de la Paix", short: "Paix", group: "orange", price: 200, rent: 16, owner: null },
+    { type: "property", name: "Boulevard des Arts", short: "Arts", group: "orange", price: 180, rent: 14, owner: null, houses: 0, mortgaged: false },
+    { type: "property", name: "Boulevard de la Paix", short: "Paix", group: "orange", price: 200, rent: 16, owner: null, houses: 0, mortgaged: false },
     { type: "vacation", name: "Vacances", short: "Vacances" },
-    { type: "property", name: "Rue Victor Hugo", short: "V. Hugo", group: "rouge", price: 220, rent: 18, owner: null },
+    { type: "property", name: "Rue Victor Hugo", short: "V. Hugo", group: "rouge", price: 220, rent: 18, owner: null, houses: 0, mortgaged: false },
     { type: "chance", name: "Carte Destin", short: "Destin" },
-    { type: "property", name: "Rue Voltaire", short: "Voltaire", group: "rouge", price: 220, rent: 18, owner: null },
-    { type: "property", name: "Rue Molière", short: "Molière", group: "rouge", price: 240, rent: 20, owner: null },
-    { type: "airport", name: "Aéroport Sud", short: "Aéroport S", price: 200, owner: null },
-    { type: "property", name: "Avenue du Parc", short: "du Parc", group: "jaune", price: 260, rent: 22, owner: null },
-    { type: "property", name: "Avenue des Sports", short: "Sports", group: "jaune", price: 260, rent: 22, owner: null },
-    { type: "utility", name: "Compagnie d'Électricité", short: "Électricité", price: 150, owner: null },
-    { type: "property", name: "Avenue Centrale", short: "Centrale", group: "jaune", price: 280, rent: 24, owner: null },
+    { type: "property", name: "Rue Voltaire", short: "Voltaire", group: "rouge", price: 220, rent: 18, owner: null, houses: 0, mortgaged: false },
+    { type: "property", name: "Rue Molière", short: "Molière", group: "rouge", price: 240, rent: 20, owner: null, houses: 0, mortgaged: false },
+    { type: "airport", name: "Aéroport Sud", short: "Aéroport S", price: 200, owner: null, mortgaged: false },
+    { type: "property", name: "Avenue du Parc", short: "du Parc", group: "jaune", price: 260, rent: 22, owner: null, houses: 0, mortgaged: false },
+    { type: "property", name: "Avenue des Sports", short: "Sports", group: "jaune", price: 260, rent: 22, owner: null, houses: 0, mortgaged: false },
+    { type: "utility", name: "Compagnie d'Électricité", short: "Électricité", price: 150, owner: null, mortgaged: false },
+    { type: "property", name: "Avenue Centrale", short: "Centrale", group: "jaune", price: 280, rent: 24, owner: null, houses: 0, mortgaged: false },
     { type: "go-to-jail", name: "Aller en prison", short: "→ Prison" },
-    { type: "property", name: "Boulevard Saint-Michel", short: "St-Michel", group: "vert", price: 300, rent: 26, owner: null },
-    { type: "property", name: "Boulevard Saint-Germain", short: "St-Germain", group: "vert", price: 300, rent: 26, owner: null },
+    { type: "property", name: "Boulevard Saint-Michel", short: "St-Michel", group: "vert", price: 300, rent: 26, owner: null, houses: 0, mortgaged: false },
+    { type: "property", name: "Boulevard Saint-Germain", short: "St-Germain", group: "vert", price: 300, rent: 26, owner: null, houses: 0, mortgaged: false },
     { type: "chance", name: "Carte Destin", short: "Destin" },
-    { type: "property", name: "Boulevard Haussmann", short: "Haussmann", group: "vert", price: 320, rent: 28, owner: null },
-    { type: "airport", name: "Aéroport Ouest", short: "Aéroport O", price: 200, owner: null },
+    { type: "property", name: "Boulevard Haussmann", short: "Haussmann", group: "vert", price: 320, rent: 28, owner: null, houses: 0, mortgaged: false },
+    { type: "airport", name: "Aéroport Ouest", short: "Aéroport O", price: 200, owner: null, mortgaged: false },
     { type: "chance", name: "Carte Destin", short: "Destin" },
-    { type: "property", name: "Avenue des Champs", short: "Champs", group: "bleu", price: 350, rent: 35, owner: null },
+    { type: "property", name: "Avenue des Champs", short: "Champs", group: "bleu", price: 350, rent: 35, owner: null, houses: 0, mortgaged: false },
     { type: "tax", name: "Taxe de luxe", short: "Taxe", amount: 100 },
-    { type: "property", name: "Avenue Royale", short: "Royale", group: "bleu", price: 400, rent: 50, owner: null },
+    { type: "property", name: "Avenue Royale", short: "Royale", group: "bleu", price: 400, rent: 50, owner: null, houses: 0, mortgaged: false },
   ];
+
+  // Coût d'une maison (ou d'un étage supplémentaire) par groupe de couleur.
+  // Même coût pour construire une maison ou passer de 4 maisons à l'hôtel.
+  const HOUSE_COST_BY_GROUP = {
+    marron: 50,
+    cyan: 50,
+    magenta: 100,
+    orange: 100,
+    rouge: 150,
+    jaune: 150,
+    vert: 200,
+    bleu: 200,
+  };
+
+  // Multiplicateur de loyer selon le nombre de maisons (index = tile.houses).
+  // Index 5 = hôtel.
+  const RENT_MULTIPLIERS_BY_HOUSES = [1, 5, 15, 30, 40, 50];
 
   // Petit paquet de cartes "Destin" — tiré au hasard avec remise.
   const CHANCE_CARDS = [
@@ -101,5 +123,5 @@
     },
   ];
 
-  return { BOARD, CHANCE_CARDS };
+  return { BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES };
 });

@@ -113,6 +113,7 @@
       el.innerHTML = `
         <div class="board-tile__band"></div>
         <div class="board-tile__icon">${tileIcon(tile)}</div>
+        <div class="board-tile__buildings" data-buildings-for="${index}"></div>
         <div class="board-tile__name">${tile.short}</div>
       `;
       boardEl.appendChild(el);
@@ -148,7 +149,7 @@
   function updateBoard(state, myPlayerId) {
     if (!boardEl) initBoard(state.board);
 
-    // 1. Surbrillance des propriétés possédées
+    // 1. Surbrillance des propriétés possédées + maisons/hôtel/hypothèque
     state.board.forEach((tile, index) => {
       const el = boardEl.querySelector(`.board-tile[data-tile-index="${index}"]`);
       if (!el) return;
@@ -157,6 +158,19 @@
         el.classList.add("board-tile--owned");
       } else {
         el.classList.remove("board-tile--owned");
+      }
+
+      const buildingsSlot = el.querySelector(`[data-buildings-for="${index}"]`);
+      if (buildingsSlot) {
+        if (tile.mortgaged) {
+          buildingsSlot.innerHTML = "🔒";
+        } else if (tile.houses === 5) {
+          buildingsSlot.innerHTML = "🏨";
+        } else if (tile.houses > 0) {
+          buildingsSlot.innerHTML = "🏠".repeat(tile.houses);
+        } else {
+          buildingsSlot.innerHTML = "";
+        }
       }
     });
 

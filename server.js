@@ -183,7 +183,7 @@ io.on("connection", (socket) => {
 
     const myPlayerId = room.socketToPlayerId[socket.id];
     if (myPlayerId === undefined) return;
-    if (room.engine.pendingDecision) return; // une décision est déjà en attente
+    if (room.engine.pendingDecision || room.engine.pendingAuction) return; // une décision/enchère est en attente
     if (room.engine.currentPlayerIndex !== myPlayerId) {
       socket.emit("room:error", "Ce n'est pas ton tour.");
       return;
@@ -202,6 +202,125 @@ io.on("connection", (socket) => {
     if (!room.engine.pendingDecision || room.engine.pendingDecision.playerId !== myPlayerId) return;
 
     room.engine.decide(myPlayerId, !!buy);
+    broadcastGame(room);
+  });
+
+  // ---- Gestion des propriétés (Phase 6) : jouable à tout moment, pas
+  // seulement pendant son propre tour, comme dans un vrai Monopoly. ----
+
+  socket.on("game:build", (payload) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.buildHouse(myPlayerId, payload && payload.tileIndex);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:sellHouse", (payload) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.sellHouse(myPlayerId, payload && payload.tileIndex);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:mortgage", (payload) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.mortgage(myPlayerId, payload && payload.tileIndex);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:unmortgage", (payload) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.unmortgage(myPlayerId, payload && payload.tileIndex);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  // ---- Enchères scellées (Phase 7) ----
+  socket.on("game:auctionBid", (payload) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.submitAuctionBid(myPlayerId, payload && payload.amount);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Mise impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  // ---- Échanges entre joueurs (Phase 7) ----
+  socket.on("game:proposeTrade", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.proposeTrade(
+      myPlayerId,
+      payload.toId,
+      payload.offerTiles || [],
+      payload.offerMoney || 0,
+      payload.requestTiles || [],
+      payload.requestMoney || 0
+    );
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Proposition impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:respondTrade", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.respondTrade(payload.tradeId, myPlayerId, !!payload.accept);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:cancelTrade", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.cancelTrade(payload.tradeId, myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
     broadcastGame(room);
   });
 

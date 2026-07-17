@@ -16,12 +16,13 @@
 
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
-    const { BOARD, CHANCE_CARDS } = require("./board.js");
-    module.exports = factory(BOARD, CHANCE_CARDS);
+    const { BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES } = require("./board.js");
+    module.exports = factory(BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES);
   } else {
-    root.ReachUpEngine = factory(root.ReachUpBoard.BOARD, root.ReachUpBoard.CHANCE_CARDS);
+    const b = root.ReachUpBoard;
+    root.ReachUpEngine = factory(b.BOARD, b.CHANCE_CARDS, b.HOUSE_COST_BY_GROUP, b.RENT_MULTIPLIERS_BY_HOUSES);
   }
-})(typeof window !== "undefined" ? window : globalThis, function (BOARD_TEMPLATE, CHANCE_CARDS) {
+})(typeof window !== "undefined" ? window : globalThis, function (BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES) {
 
   const STARTING_MONEY = 1500;
   const SALARY = 200;
@@ -86,6 +87,16 @@
       // Dernier lancer de dés effectué (Phase 4 : sert à afficher les dés
       // sur le plateau visuel). null tant qu'aucun dé n'a été lancé.
       this.lastRoll = null; // { playerId, d1, d2, isDouble, inJailRoll }
+
+      // Enchère scellée en cours (Phase 7), déclenchée quand personne
+      // n'achète une case au prix affiché.
+      this.pendingAuction = null; // { tileIndex, bids: {playerId: montant}, pendingPlayers: [...] }
+
+      // Propositions d'échange en cours (Phase 7). Contrairement aux achats
+      // et enchères, les échanges ne bloquent jamais le jeu : n'importe qui
+      // peut en proposer ou en accepter à tout moment.
+      this.tradeOffers = [];
+      this._nextTradeId = 1;
     }
 
     addLog(message) {
@@ -133,42 +144,172 @@
       return tilesOfGroup.every((t) => t.owner === playerId);
     }
 
+    // ---- Construction (maisons/hôtel) — Phase 6 ----
+    // Règle "Even Build" (comme dans le vrai Richup.io) : on ne peut
+    // construire que sur la propriété du groupe qui a le MOINS de
+    // maisons, pour garder une construction répartie équitablement.
+    canBuildHouse(playerId, tileIndex) {
+      const tile = this.board[tileIndex];
+      if (!tile || tile.type !== "property") return { ok: false, reason: "Cette case n'est pas constructible." };
+      if (tile.owner !== playerId) return { ok: false, reason: "Tu ne possèdes pas cette propriété." };
+      if (tile.mortgaged) return { ok: false, reason: "Cette propriété est hypothéquée." };
+      if (!this.ownsFullSet(playerId, tile.group)) return { ok: false, reason: "Il faut posséder tout le groupe pour construire." };
+      if (tile.houses >= 5) return { ok: false, reason: "Cette propriété a déjà un hôtel." };
+
+      const groupTiles = this.board.filter((t) => t.type === "property" && t.group === tile.group);
+      const minHouses = Math.min(...groupTiles.map((t) => t.houses));
+      if (tile.houses !== minHouses) {
+        return { ok: false, reason: "Construis d'abord sur les propriétés moins bien loties du groupe (règle Even Build)." };
+      }
+
+      const cost = HOUSE_COST_BY_GROUP[tile.group];
+      const player = this.players[playerId];
+      if (player.money < cost) return { ok: false, reason: "Pas assez d'argent." };
+
+      return { ok: true, cost };
+    }
+
+    buildHouse(playerId, tileIndex) {
+      const check = this.canBuildHouse(playerId, tileIndex);
+      if (!check.ok) return check;
+
+      const tile = this.board[tileIndex];
+      const player = this.players[playerId];
+      this.pay(player, null, check.cost);
+      tile.houses += 1;
+      const label = tile.houses === 5 ? "un hôtel" : `${tile.houses} maison(s)`;
+      this.addLog(`${player.name} construit sur ${tile.name} (${label}) pour ${check.cost}.`);
+      return { ok: true };
+    }
+
+    // Vente d'une maison : symétrique de la construction (on vend d'abord
+    // sur la propriété qui a le PLUS de maisons du groupe), remboursée à
+    // la moitié du prix de construction.
+    canSellHouse(playerId, tileIndex) {
+      const tile = this.board[tileIndex];
+      if (!tile || tile.type !== "property") return { ok: false, reason: "Cette case n'a pas de maisons." };
+      if (tile.owner !== playerId) return { ok: false, reason: "Tu ne possèdes pas cette propriété." };
+      if (tile.houses <= 0) return { ok: false, reason: "Aucune maison à vendre ici." };
+
+      const groupTiles = this.board.filter((t) => t.type === "property" && t.group === tile.group);
+      const maxHouses = Math.max(...groupTiles.map((t) => t.houses));
+      if (tile.houses !== maxHouses) {
+        return { ok: false, reason: "Vends d'abord les maisons des propriétés les mieux loties du groupe." };
+      }
+
+      const refund = Math.floor(HOUSE_COST_BY_GROUP[tile.group] / 2);
+      return { ok: true, refund };
+    }
+
+    sellHouse(playerId, tileIndex) {
+      const check = this.canSellHouse(playerId, tileIndex);
+      if (!check.ok) return check;
+
+      const tile = this.board[tileIndex];
+      const player = this.players[playerId];
+      tile.houses -= 1;
+      this.pay(null, player, check.refund);
+      this.addLog(`${player.name} vend une maison sur ${tile.name} pour ${check.refund}.`);
+      return { ok: true };
+    }
+
+    // ---- Hypothèque — Phase 6 ----
+    canMortgage(playerId, tileIndex) {
+      const tile = this.board[tileIndex];
+      if (!tile) return { ok: false, reason: "Case invalide." };
+      if (!["property", "airport", "utility"].includes(tile.type)) return { ok: false, reason: "Cette case ne peut pas être hypothéquée." };
+      if (tile.owner !== playerId) return { ok: false, reason: "Tu ne possèdes pas cette propriété." };
+      if (tile.mortgaged) return { ok: false, reason: "Déjà hypothéquée." };
+      if (tile.type === "property" && tile.houses > 0) return { ok: false, reason: "Vends d'abord les maisons avant d'hypothéquer." };
+
+      const amount = Math.floor(tile.price / 2);
+      return { ok: true, amount };
+    }
+
+    mortgage(playerId, tileIndex) {
+      const check = this.canMortgage(playerId, tileIndex);
+      if (!check.ok) return check;
+
+      const tile = this.board[tileIndex];
+      const player = this.players[playerId];
+      tile.mortgaged = true;
+      this.pay(null, player, check.amount);
+      this.addLog(`${player.name} hypothèque ${tile.name} et reçoit ${check.amount}.`);
+      return { ok: true };
+    }
+
+    canUnmortgage(playerId, tileIndex) {
+      const tile = this.board[tileIndex];
+      if (!tile) return { ok: false, reason: "Case invalide." };
+      if (tile.owner !== playerId) return { ok: false, reason: "Tu ne possèdes pas cette propriété." };
+      if (!tile.mortgaged) return { ok: false, reason: "Cette propriété n'est pas hypothéquée." };
+
+      const cost = Math.ceil((tile.price / 2) * 1.1); // remboursement + 10% d'intérêt
+      const player = this.players[playerId];
+      if (player.money < cost) return { ok: false, reason: "Pas assez d'argent pour lever l'hypothèque." };
+
+      return { ok: true, cost };
+    }
+
+    unmortgage(playerId, tileIndex) {
+      const check = this.canUnmortgage(playerId, tileIndex);
+      if (!check.ok) return check;
+
+      const tile = this.board[tileIndex];
+      const player = this.players[playerId];
+      this.pay(player, null, check.cost);
+      tile.mortgaged = false;
+      this.addLog(`${player.name} lève l'hypothèque sur ${tile.name} pour ${check.cost}.`);
+      return { ok: true };
+    }
+
     // Résout une case qui n'a besoin d'AUCUNE décision humaine
     // (loyer, taxe, carte destin, prison...). L'achat d'une case libre
     // est géré séparément par roll()/decide(), pas ici.
     resolveTile(player, tile, diceSum) {
       switch (tile.type) {
         case "property": {
-          if (tile.owner === null) {
-            this.addLog(`${player.name} n'a pas assez d'argent pour acheter ${tile.name}.`);
-          } else if (tile.owner !== player.id) {
-            let rent = tile.rent;
-            if (this.ownsFullSet(tile.owner, tile.group)) rent *= 2;
+          if (tile.owner !== player.id) {
+            if (tile.mortgaged) {
+              this.addLog(`${player.name} ne paie rien : ${tile.name} est hypothéquée.`);
+              break;
+            }
+            let rent;
+            if (tile.houses > 0) {
+              rent = tile.rent * RENT_MULTIPLIERS_BY_HOUSES[tile.houses];
+            } else {
+              rent = this.ownsFullSet(tile.owner, tile.group) ? tile.rent * 2 : tile.rent;
+            }
             const owner = this.players[tile.owner];
             this.pay(player, owner, rent);
-            this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}).`);
+            const buildingNote = tile.houses === 5 ? " (hôtel)" : tile.houses > 0 ? ` (${tile.houses} maison(s))` : "";
+            this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}${buildingNote}).`);
           }
           break;
         }
         case "airport": {
-          if (tile.owner === null) {
-            this.addLog(`${player.name} n'a pas assez d'argent pour acheter ${tile.name}.`);
-          } else if (tile.owner !== player.id) {
+          if (tile.owner !== player.id) {
+            if (tile.mortgaged) {
+              this.addLog(`${player.name} ne paie rien : ${tile.name} est hypothéquée.`);
+              break;
+            }
             const owner = this.players[tile.owner];
-            const count = this.board.filter((t) => t.type === "airport" && t.owner === tile.owner).length;
+            const count = this.board.filter((t) => t.type === "airport" && t.owner === tile.owner && !t.mortgaged).length;
             const rentTable = [25, 50, 100, 200];
-            const rent = rentTable[count - 1];
+            const rent = rentTable[Math.max(count - 1, 0)];
             this.pay(player, owner, rent);
             this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}).`);
           }
           break;
         }
         case "utility": {
-          if (tile.owner === null) {
-            this.addLog(`${player.name} n'a pas assez d'argent pour acheter ${tile.name}.`);
-          } else if (tile.owner !== player.id) {
+          if (tile.owner !== player.id) {
+            if (tile.mortgaged) {
+              this.addLog(`${player.name} ne paie rien : ${tile.name} est hypothéquée.`);
+              break;
+            }
             const owner = this.players[tile.owner];
-            const count = this.board.filter((t) => t.type === "utility" && t.owner === tile.owner).length;
+            const count = this.board.filter((t) => t.type === "utility" && t.owner === tile.owner && !t.mortgaged).length;
             const multiplier = count === 1 ? 4 : 10;
             const rent = diceSum * multiplier;
             this.pay(player, owner, rent);
@@ -210,19 +351,16 @@
       }
     }
 
-    // Une case "nécessite une décision" seulement si elle est achetable,
-    // libre, ET que le joueur a les moyens de se la payer.
-    _tileNeedsDecision(player, tile) {
-      const ownableTypes = ["property", "airport", "utility"];
-      return ownableTypes.includes(tile.type) && tile.owner === null && player.money >= tile.price;
-    }
-
     checkBankruptcy(player) {
       if (player.money < 0 && !player.bankrupt) {
         player.bankrupt = true;
         // Ses propriétés redeviennent libres (pas d'enchère pour l'instant)
         this.board.forEach((tile) => {
-          if (tile.owner === player.id) tile.owner = null;
+          if (tile.owner === player.id) {
+            tile.owner = null;
+            if (tile.type === "property") tile.houses = 0;
+            if ("mortgaged" in tile) tile.mortgaged = false;
+          }
         });
         this.addLog(`💥 ${player.name} est en faillite et quitte la partie.`);
       }
@@ -237,13 +375,19 @@
       }
     }
 
-    // Valeur totale d'un joueur : argent en poche + prix d'achat de ses
-    // propriétés (les maisons/hôtels n'existant pas encore, pas de bonus ici).
+    // Valeur totale d'un joueur : argent en poche + valeur de ses
+    // propriétés (réduite de moitié si hypothéquées) + valeur des
+    // maisons/hôtel construits dessus.
     _computeNetWorth(player) {
-      const propertiesValue = this.board
-        .filter((t) => t.owner === player.id)
-        .reduce((sum, t) => sum + (t.price || 0), 0);
-      return player.money + propertiesValue;
+      let value = player.money;
+      this.board.forEach((tile) => {
+        if (tile.owner !== player.id) return;
+        value += tile.mortgaged ? Math.floor((tile.price || 0) / 2) : tile.price || 0;
+        if (tile.type === "property" && tile.houses > 0) {
+          value += tile.houses * HOUSE_COST_BY_GROUP[tile.group];
+        }
+      });
+      return value;
     }
 
     // Si une limite de tours est configurée (Phase 5) et qu'elle est
@@ -330,7 +474,7 @@
     // clic sur "Lancer les dés". Peut se terminer en attente d'une
     // décision d'achat (this.pendingDecision devient non-null).
     roll() {
-      if (this.gameOver || this.pendingDecision) return;
+      if (this.gameOver || this.pendingDecision || this.pendingAuction) return;
       const player = this.currentPlayer();
       if (player.bankrupt) {
         this.nextPlayer();
@@ -376,10 +520,17 @@
       const tile = this.board[player.position];
       this.addLog(`${player.name} arrive sur "${tile.name}".`);
 
-      if (this._tileNeedsDecision(player, tile)) {
-        this.pendingDecision = { type: "buy", tileIndex: player.position, playerId: player.id };
-        this._pendingDiceWasDouble = isDouble;
-        return; // on attend maintenant un appel à decide()
+      const ownableTypes = ["property", "airport", "utility"];
+      if (ownableTypes.includes(tile.type) && tile.owner === null) {
+        if (player.money >= tile.price) {
+          this.pendingDecision = { type: "buy", tileIndex: player.position, playerId: player.id };
+          this._pendingDiceWasDouble = isDouble;
+        } else {
+          this.addLog(`${player.name} n'a pas les moyens d'acheter ${tile.name}.`);
+          this._pendingDiceWasDouble = isDouble;
+          this.startAuction(player.position);
+        }
+        return; // on attend maintenant un achat, une enchère, ou les deux à la suite
       }
 
       this.resolveTile(player, tile, sum);
@@ -397,14 +548,168 @@
         this.pay(player, null, tile.price);
         tile.owner = player.id;
         this.addLog(`${player.name} achète ${tile.name} pour ${tile.price}.`);
+
+        const wasDouble = this._pendingDiceWasDouble;
+        this.pendingDecision = null;
+        this._pendingDiceWasDouble = false;
+        this._afterRollResolved(wasDouble);
       } else {
-        this.addLog(`${player.name} ne rachète pas ${tile.name}.`);
+        this.addLog(`${player.name} ne rachète pas ${tile.name} : mise aux enchères !`);
+        const tileIndex = this.pendingDecision.tileIndex;
+        this.pendingDecision = null;
+        // _pendingDiceWasDouble reste en mémoire : utilisé une fois l'enchère résolue.
+        this.startAuction(tileIndex);
+      }
+    }
+
+    // ---- Enchères scellées — Phase 7 ----
+    // Chaque joueur actif mise en secret (0 = passer) ; la mise la plus
+    // haute remporte la propriété. En cas d'égalité, le premier joueur
+    // (dans l'ordre des identifiants) l'emporte.
+    startAuction(tileIndex) {
+      const tile = this.board[tileIndex];
+      const bidders = this.activePlayers().map((p) => p.id);
+      if (bidders.length === 0) {
+        this._afterRollResolved(this._pendingDiceWasDouble);
+        return;
+      }
+      this.pendingAuction = { tileIndex, bids: {}, pendingPlayers: bidders };
+      this.addLog(`🔨 Enchère scellée sur ${tile.name} ! Chaque joueur mise en secret (0 pour passer).`);
+    }
+
+    submitAuctionBid(playerId, amount) {
+      if (!this.pendingAuction) return { ok: false, reason: "Aucune enchère en cours." };
+      if (!this.pendingAuction.pendingPlayers.includes(playerId)) {
+        return { ok: false, reason: "Tu as déjà misé, ou cette enchère ne te concerne pas." };
+      }
+      const player = this.players[playerId];
+      const bid = Math.max(0, Math.floor(Number(amount) || 0));
+      if (bid > player.money) return { ok: false, reason: "Tu n'as pas assez d'argent pour cette mise." };
+
+      this.pendingAuction.bids[playerId] = bid;
+      this.pendingAuction.pendingPlayers = this.pendingAuction.pendingPlayers.filter((id) => id !== playerId);
+      this.addLog(`${player.name} a soumis sa mise scellée.`);
+
+      if (this.pendingAuction.pendingPlayers.length === 0) {
+        this._resolveAuction();
+      }
+      return { ok: true };
+    }
+
+    _resolveAuction() {
+      const auction = this.pendingAuction;
+      const tile = this.board[auction.tileIndex];
+
+      let bestId = null;
+      let bestBid = -1;
+      this.activePlayers().forEach((p) => {
+        const bid = auction.bids[p.id] || 0;
+        if (bid > bestBid) {
+          bestBid = bid;
+          bestId = p.id;
+        }
+      });
+
+      const summary = this.activePlayers().map((p) => `${p.name} : ${auction.bids[p.id] || 0}`).join(", ");
+      this.addLog(`Résultats de l'enchère sur ${tile.name} — ${summary}.`);
+
+      if (bestId !== null && bestBid > 0) {
+        const winner = this.players[bestId];
+        this.pay(winner, null, bestBid);
+        tile.owner = winner.id;
+        this.addLog(`🔨 ${winner.name} remporte l'enchère sur ${tile.name} pour ${bestBid} !`);
+      } else {
+        this.addLog(`Personne n'a misé : ${tile.name} reste libre.`);
       }
 
+      this.pendingAuction = null;
       const wasDouble = this._pendingDiceWasDouble;
-      this.pendingDecision = null;
       this._pendingDiceWasDouble = false;
       this._afterRollResolved(wasDouble);
+    }
+
+    // ---- Échanges entre joueurs — Phase 7 ----
+    // Contrairement aux achats/enchères, un échange ne bloque jamais le
+    // jeu : n'importe qui peut en proposer ou en accepter à tout moment,
+    // même si ce n'est pas son tour.
+    proposeTrade(fromId, toId, offerTiles, offerMoney, requestTiles, requestMoney) {
+      const from = this.players[fromId];
+      const to = this.players[toId];
+      if (!from || !to || from.bankrupt || to.bankrupt || fromId === toId) {
+        return { ok: false, reason: "Échange impossible avec ce joueur." };
+      }
+
+      const badOffer = (offerTiles || []).some((i) => {
+        const t = this.board[i];
+        return !t || t.owner !== fromId || t.mortgaged;
+      });
+      const badRequest = (requestTiles || []).some((i) => {
+        const t = this.board[i];
+        return !t || t.owner !== toId || t.mortgaged;
+      });
+      if (badOffer || badRequest) {
+        return { ok: false, reason: "Une des propriétés choisies n'est plus valide (hypothéquée ou non possédée)." };
+      }
+
+      const money1 = Math.max(0, Math.floor(Number(offerMoney) || 0));
+      const money2 = Math.max(0, Math.floor(Number(requestMoney) || 0));
+      if (money1 > from.money) return { ok: false, reason: "Tu ne peux pas offrir plus d'argent que tu n'en as." };
+
+      const trade = {
+        id: this._nextTradeId++,
+        fromId,
+        toId,
+        offerTiles: [...(offerTiles || [])],
+        offerMoney: money1,
+        requestTiles: [...(requestTiles || [])],
+        requestMoney: money2,
+      };
+      this.tradeOffers.push(trade);
+      this.addLog(`${from.name} propose un échange à ${to.name}.`);
+      return { ok: true, tradeId: trade.id };
+    }
+
+    respondTrade(tradeId, playerId, accept) {
+      const idx = this.tradeOffers.findIndex((t) => t.id === tradeId);
+      if (idx === -1) return { ok: false, reason: "Cette proposition n'existe plus." };
+      const trade = this.tradeOffers[idx];
+      if (trade.toId !== playerId) return { ok: false, reason: "Cette proposition ne t'est pas destinée." };
+
+      if (!accept) {
+        this.tradeOffers.splice(idx, 1);
+        this.addLog(`${this.players[playerId].name} refuse l'échange proposé par ${this.players[trade.fromId].name}.`);
+        return { ok: true };
+      }
+
+      // On revérifie que tout est toujours valide au moment de l'acceptation
+      // (une propriété a pu être vendue/hypothéquée entre-temps).
+      const from = this.players[trade.fromId];
+      const to = this.players[trade.toId];
+      const offerStillValid = trade.offerTiles.every((i) => this.board[i].owner === trade.fromId && !this.board[i].mortgaged);
+      const requestStillValid = trade.requestTiles.every((i) => this.board[i].owner === trade.toId && !this.board[i].mortgaged);
+
+      if (!offerStillValid || !requestStillValid || from.money < trade.offerMoney || to.money < trade.requestMoney) {
+        this.tradeOffers.splice(idx, 1);
+        return { ok: false, reason: "L'échange n'est plus valide (une propriété ou l'argent a changé depuis la proposition)." };
+      }
+
+      trade.offerTiles.forEach((i) => { this.board[i].owner = trade.toId; });
+      trade.requestTiles.forEach((i) => { this.board[i].owner = trade.fromId; });
+      this.pay(from, to, trade.offerMoney);
+      this.pay(to, from, trade.requestMoney);
+
+      this.tradeOffers.splice(idx, 1);
+      this.addLog(`🤝 Échange conclu entre ${from.name} et ${to.name} !`);
+      return { ok: true };
+    }
+
+    cancelTrade(tradeId, playerId) {
+      const idx = this.tradeOffers.findIndex((t) => t.id === tradeId);
+      if (idx === -1) return { ok: false, reason: "Cette proposition n'existe plus." };
+      if (this.tradeOffers[idx].fromId !== playerId) return { ok: false, reason: "Tu ne peux annuler que tes propres propositions." };
+      this.tradeOffers.splice(idx, 1);
+      this.addLog(`${this.players[playerId].name} annule sa proposition d'échange.`);
+      return { ok: true };
     }
 
     // Snapshot complet et public de l'état de la partie (aucune information
@@ -419,6 +724,12 @@
         lastRoll: this.lastRoll,
         vacationPot: this.vacationPotEnabled ? this.vacationPot : null,
         turnLimit: this.turnLimit,
+        // On ne révèle jamais les montants misés avant la fin de l'enchère
+        // (c'est une enchère scellée) — seulement qui doit encore miser.
+        pendingAuction: this.pendingAuction
+          ? { tileIndex: this.pendingAuction.tileIndex, pendingPlayers: [...this.pendingAuction.pendingPlayers] }
+          : null,
+        tradeOffers: this.tradeOffers.map((t) => ({ ...t })),
         players: this.players.map((p) => ({
           id: p.id,
           name: p.name,
@@ -436,6 +747,9 @@
           price: t.price || null,
           rent: t.rent || null,
           owner: t.owner === undefined ? null : t.owner,
+          houses: t.houses || 0,
+          mortgaged: !!t.mortgaged,
+          houseCost: t.type === "property" ? HOUSE_COST_BY_GROUP[t.group] : null,
         })),
         log: this.log.slice(-80),
       };
@@ -450,7 +764,16 @@
       if (this.gameOver) return;
       const startingIndex = this.currentPlayerIndex;
       do {
-        if (this.pendingDecision) {
+        if (this.pendingAuction) {
+          const tile = this.board[this.pendingAuction.tileIndex];
+          // Copie du tableau : on va le modifier pendant qu'on le parcourt.
+          [...this.pendingAuction.pendingPlayers].forEach((pid) => {
+            const bidder = this.players[pid];
+            const wantsIt = this.decideBuy(bidder, tile);
+            const amount = wantsIt ? Math.min(tile.price, Math.floor(bidder.money * 0.3)) : 0;
+            this.submitAuctionBid(pid, amount);
+          });
+        } else if (this.pendingDecision) {
           const tile = this.board[this.pendingDecision.tileIndex];
           const player = this.players[this.pendingDecision.playerId];
           const wantsToBuy = this.decideBuy(player, tile);

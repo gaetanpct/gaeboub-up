@@ -50,7 +50,11 @@ btnJoin.addEventListener("click", () => {
 });
 
 socket.on("room:error", (message) => {
-  if (!screens.home.hidden) {
+  if (!tradeModal.hidden) {
+    document.getElementById("trade-error").textContent = message;
+  } else if (!propertiesModal.hidden) {
+    document.getElementById("properties-error").textContent = message;
+  } else if (!screens.home.hidden) {
     homeError.textContent = message;
   } else if (!screens.lobby.hidden) {
     document.getElementById("lobby-error").textContent = message;
@@ -139,6 +143,40 @@ socket.on("room:update", (room) => {
 const playersPanel = document.getElementById("players-panel");
 const actionArea = document.getElementById("action-area");
 const logPanel = document.getElementById("log-panel");
+const propertiesModal = document.getElementById("properties-modal");
+const propertiesList = document.getElementById("properties-list");
+const btnOpenProperties = document.getElementById("btn-open-properties");
+const btnCloseProperties = document.getElementById("btn-close-properties");
+
+const tradeModal = document.getElementById("trade-modal");
+const tradeContent = document.getElementById("trade-content");
+const btnOpenTrade = document.getElementById("btn-open-trade");
+const btnCloseTrade = document.getElementById("btn-close-trade");
+let tradeTargetId = null;
+
+let latestGameState = null;
+
+btnOpenProperties.addEventListener("click", () => {
+  propertiesModal.hidden = false;
+  renderPropertiesModal();
+});
+btnCloseProperties.addEventListener("click", () => {
+  propertiesModal.hidden = true;
+});
+propertiesModal.addEventListener("click", (event) => {
+  if (event.target === propertiesModal) propertiesModal.hidden = true;
+});
+
+btnOpenTrade.addEventListener("click", () => {
+  tradeModal.hidden = false;
+  renderTradeModal();
+});
+btnCloseTrade.addEventListener("click", () => {
+  tradeModal.hidden = true;
+});
+tradeModal.addEventListener("click", (event) => {
+  if (event.target === tradeModal) tradeModal.hidden = true;
+});
 
 socket.on("game:started", ({ state, socketToPlayerId }) => {
   myPlayerId = socketToPlayerId[socket.id];
@@ -151,10 +189,13 @@ socket.on("game:update", ({ state }) => {
 });
 
 function renderGame(state) {
+  latestGameState = state;
   ReachUpBoardView.updateBoard(state, myPlayerId);
   renderPlayers(state);
   renderActionArea(state);
   renderLog(state);
+  if (!propertiesModal.hidden) renderPropertiesModal();
+  if (!tradeModal.hidden) renderTradeModal();
 }
 
 function renderPlayers(state) {
@@ -197,6 +238,28 @@ function renderPlayers(state) {
 function renderActionArea(state) {
   actionArea.innerHTML = "";
   if (state.gameOver) return;
+
+  // Cas 0 : une enchère scellée est en cours
+  if (state.pendingAuction) {
+    const tile = state.board[state.pendingAuction.tileIndex];
+    if (state.pendingAuction.pendingPlayers.includes(myPlayerId)) {
+      const box = document.createElement("div");
+      box.className = "action-box";
+      box.innerHTML = `
+        <p>🔨 Enchère scellée sur <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
+        <input type="number" id="auction-bid-input" min="0" value="0" class="auction-input" />
+        <button id="btn-submit-bid" class="btn-primary">Miser (0 = passer)</button>
+      `;
+      actionArea.appendChild(box);
+      document.getElementById("btn-submit-bid").addEventListener("click", () => {
+        const amount = Number(document.getElementById("auction-bid-input").value) || 0;
+        socket.emit("game:auctionBid", { amount });
+      });
+    } else {
+      showWaitingBox(`🔨 Enchère en cours sur ${tile.name}, en attente des autres joueurs...`);
+    }
+    return;
+  }
 
   // Cas 1 : quelqu'un doit décider d'acheter ou non
   if (state.pendingDecision) {
@@ -251,4 +314,219 @@ function showWaitingBox(text) {
 function renderLog(state) {
   logPanel.innerHTML = state.log.map((line) => `<div>${line}</div>`).join("");
   logPanel.scrollTop = logPanel.scrollHeight;
+}
+
+function renderPropertiesModal() {
+  if (!latestGameState) return;
+  document.getElementById("properties-error").textContent = "";
+
+  const myTiles = latestGameState.board
+    .map((tile, index) => ({ tile, index }))
+    .filter(({ tile }) => tile.owner === myPlayerId);
+
+  if (myTiles.length === 0) {
+    propertiesList.innerHTML = `<p class="properties-empty">Tu ne possèdes aucune propriété pour le moment.</p>`;
+    return;
+  }
+
+  propertiesList.innerHTML = myTiles
+    .map(({ tile, index }) => renderPropertyRow(tile, index))
+    .join("");
+
+  // Boutons "construire"
+  propertiesList.querySelectorAll("[data-action='build']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      socket.emit("game:build", { tileIndex: Number(btn.dataset.tile) });
+    });
+  });
+  propertiesList.querySelectorAll("[data-action='sellHouse']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      socket.emit("game:sellHouse", { tileIndex: Number(btn.dataset.tile) });
+    });
+  });
+  propertiesList.querySelectorAll("[data-action='mortgage']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      socket.emit("game:mortgage", { tileIndex: Number(btn.dataset.tile) });
+    });
+  });
+  propertiesList.querySelectorAll("[data-action='unmortgage']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      socket.emit("game:unmortgage", { tileIndex: Number(btn.dataset.tile) });
+    });
+  });
+}
+
+function renderPropertyRow(tile, index) {
+  const ownsFullSet =
+    tile.type === "property" &&
+    latestGameState.board.filter((t) => t.type === "property" && t.group === tile.group).every((t) => t.owner === myPlayerId);
+
+  let buildingLabel = "";
+  if (tile.type === "property") {
+    buildingLabel = tile.houses === 5 ? "🏨 Hôtel" : tile.houses > 0 ? `🏠 x${tile.houses}` : "";
+  }
+
+  const buttons = [];
+
+  if (tile.mortgaged) {
+    const unmortgageCost = Math.ceil((tile.price / 2) * 1.1);
+    buttons.push(`<button data-action="unmortgage" data-tile="${index}">🔓 Lever l'hypothèque (${unmortgageCost})</button>`);
+  } else {
+    if (tile.type === "property" && ownsFullSet && tile.houses < 5) {
+      buttons.push(`<button data-action="build" data-tile="${index}" class="btn-primary">🏠 Construire (${tile.houseCost})</button>`);
+    }
+    if (tile.type === "property" && tile.houses > 0) {
+      buttons.push(`<button data-action="sellHouse" data-tile="${index}">➖ Vendre une maison (+${Math.floor(tile.houseCost / 2)})</button>`);
+    }
+    if (tile.houses === 0) {
+      const mortgageAmount = Math.floor(tile.price / 2);
+      buttons.push(`<button data-action="mortgage" data-tile="${index}">🏦 Hypothéquer (+${mortgageAmount})</button>`);
+    }
+  }
+
+  return `
+    <div class="property-row ${tile.mortgaged ? "property-row--mortgaged" : ""}">
+      <div class="property-row__info">
+        <strong>${tile.name}</strong> ${buildingLabel}
+        ${tile.mortgaged ? '<span class="mortgaged-tag">Hypothéquée</span>' : ""}
+      </div>
+      <div class="property-row__actions">${buttons.join("")}</div>
+    </div>
+  `;
+}
+
+function renderTradeModal() {
+  if (!latestGameState) return;
+  document.getElementById("trade-error").textContent = "";
+
+  const others = latestGameState.players.filter((p) => p.id !== myPlayerId && !p.bankrupt);
+  if (tradeTargetId === null || !others.some((p) => p.id === tradeTargetId)) {
+    tradeTargetId = others.length > 0 ? others[0].id : null;
+  }
+
+  const myTiles = latestGameState.board
+    .map((tile, index) => ({ tile, index }))
+    .filter(({ tile }) => tile.owner === myPlayerId && !tile.mortgaged);
+
+  const theirTiles =
+    tradeTargetId !== null
+      ? latestGameState.board
+          .map((tile, index) => ({ tile, index }))
+          .filter(({ tile }) => tile.owner === tradeTargetId && !tile.mortgaged)
+      : [];
+
+  const targetOptions = others
+    .map((p) => `<option value="${p.id}" ${p.id === tradeTargetId ? "selected" : ""}>${p.name}</option>`)
+    .join("");
+
+  const tileCheckbox = (tile, index, className) =>
+    `<label class="tile-checkbox"><input type="checkbox" class="${className}" value="${index}" /> ${tile.name}</label>`;
+
+  const myTilesHtml =
+    myTiles.map(({ tile, index }) => tileCheckbox(tile, index, "offer-tile")).join("") ||
+    `<p class="properties-empty">Tu n'as aucune propriété libre à proposer.</p>`;
+
+  const theirTilesHtml =
+    theirTiles.map(({ tile, index }) => tileCheckbox(tile, index, "request-tile")).join("") ||
+    `<p class="properties-empty">Ce joueur n'a aucune propriété libre.</p>`;
+
+  const incoming = latestGameState.tradeOffers.filter((t) => t.toId === myPlayerId);
+  const outgoing = latestGameState.tradeOffers.filter((t) => t.fromId === myPlayerId);
+
+  const formHtml =
+    others.length === 0
+      ? `<p class="properties-empty">Aucun autre joueur actif avec qui échanger.</p>`
+      : `
+        <div class="trade-form">
+          <label>Proposer un échange à
+            <select id="trade-target">${targetOptions}</select>
+          </label>
+          <div class="trade-columns">
+            <div class="trade-column">
+              <h4>Tu donnes</h4>
+              <label>Argent <input type="number" id="trade-offer-money" min="0" value="0" /></label>
+              <div class="tile-checkbox-list">${myTilesHtml}</div>
+            </div>
+            <div class="trade-column">
+              <h4>Tu reçois</h4>
+              <label>Argent <input type="number" id="trade-request-money" min="0" value="0" /></label>
+              <div class="tile-checkbox-list">${theirTilesHtml}</div>
+            </div>
+          </div>
+          <button id="btn-propose-trade" class="btn-primary">Proposer l'échange</button>
+        </div>
+      `;
+
+  tradeContent.innerHTML = `
+    ${formHtml}
+    <h3 class="trade-section-title">📬 Offres reçues</h3>
+    ${incoming.length === 0 ? `<p class="properties-empty">Aucune offre reçue.</p>` : incoming.map((t) => renderTradeRow(t, true)).join("")}
+    <h3 class="trade-section-title">📤 Tes propositions envoyées</h3>
+    ${outgoing.length === 0 ? `<p class="properties-empty">Aucune proposition envoyée.</p>` : outgoing.map((t) => renderTradeRow(t, false)).join("")}
+  `;
+
+  const targetSelect = document.getElementById("trade-target");
+  if (targetSelect) {
+    targetSelect.addEventListener("change", () => {
+      tradeTargetId = Number(targetSelect.value);
+      renderTradeModal();
+    });
+  }
+
+  const proposeBtn = document.getElementById("btn-propose-trade");
+  if (proposeBtn) {
+    proposeBtn.addEventListener("click", () => {
+      const offerTiles = [...document.querySelectorAll(".offer-tile:checked")].map((el) => Number(el.value));
+      const requestTiles = [...document.querySelectorAll(".request-tile:checked")].map((el) => Number(el.value));
+      const offerMoney = Number(document.getElementById("trade-offer-money").value) || 0;
+      const requestMoney = Number(document.getElementById("trade-request-money").value) || 0;
+      socket.emit("game:proposeTrade", { toId: tradeTargetId, offerTiles, offerMoney, requestTiles, requestMoney });
+    });
+  }
+
+  propertiesModalWireTradeButtons();
+}
+
+function propertiesModalWireTradeButtons() {
+  tradeContent.querySelectorAll("[data-accept-trade]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      socket.emit("game:respondTrade", { tradeId: Number(btn.dataset.acceptTrade), accept: true });
+    });
+  });
+  tradeContent.querySelectorAll("[data-reject-trade]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      socket.emit("game:respondTrade", { tradeId: Number(btn.dataset.rejectTrade), accept: false });
+    });
+  });
+  tradeContent.querySelectorAll("[data-cancel-trade]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      socket.emit("game:cancelTrade", { tradeId: Number(btn.dataset.cancelTrade) });
+    });
+  });
+}
+
+function renderTradeRow(trade, isIncoming) {
+  const fromPlayer = latestGameState.players[trade.fromId];
+  const toPlayer = latestGameState.players[trade.toId];
+
+  const offerNames = trade.offerTiles.map((i) => latestGameState.board[i].name);
+  if (trade.offerMoney > 0) offerNames.push(`${trade.offerMoney} 💰`);
+  const requestNames = trade.requestTiles.map((i) => latestGameState.board[i].name);
+  if (trade.requestMoney > 0) requestNames.push(`${trade.requestMoney} 💰`);
+
+  const description = isIncoming
+    ? `<strong>${fromPlayer.name}</strong> te propose : ${offerNames.join(", ") || "rien"} contre ${requestNames.join(", ") || "rien"}`
+    : `À <strong>${toPlayer.name}</strong> : ${offerNames.join(", ") || "rien"} contre ${requestNames.join(", ") || "rien"}`;
+
+  const actions = isIncoming
+    ? `<button data-accept-trade="${trade.id}" class="btn-primary">Accepter</button>
+       <button data-reject-trade="${trade.id}">Refuser</button>`
+    : `<button data-cancel-trade="${trade.id}">Annuler</button>`;
+
+  return `
+    <div class="property-row">
+      <div class="property-row__info">${description}</div>
+      <div class="property-row__actions">${actions}</div>
+    </div>
+  `;
 }
