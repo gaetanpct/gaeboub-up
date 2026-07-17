@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reach Up</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <main class="app">
+    <h1>Reach Up</h1>
+    <p class="subtitle">Phase 1 — fondation du projet</p>
+
+    <div id="status-box" class="status-box status-disconnected">
+      En attente de connexion au serveur...
+    </div>
+
+    <p class="players-count">
+      Joueurs connectés en ce moment : <span id="players-count">0</span>
+    </p>
+  </main>
+
+  <!-- Cette librairie est fournie automatiquement par Socket.io côté serveur,
+       pas besoin de la télécharger ni de l'installer. -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+/* Phase 1 : style minimal, juste pour que ce soit lisible.
+   Le design final arrivera en Phase 6. */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #130f1d;
+  color: #f2f0f7;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  text-align: center;
+  padding: 2rem;
+  max-width: 420px;
+}
+
+h1 {
+  margin-bottom: 0.25rem;
+}
+
+.subtitle {
+  color: #9d94b3;
+  margin-top: 0;
+  margin-bottom: 2rem;
+}
+
+.status-box {
+  padding: 1rem;
+  border-radius: 8px;
+  font-weight: 600;
+  transition: background-color 0.2s ease;
+}
+
+.status-disconnected {
+  background: #3a2230;
+  color: #ffb4c6;
+}
+
+.status-connected {
+  background: #1f3a2b;
+  color: #a6f2c1;
+}
+
+.players-count {
+  margin-top: 1.5rem;
+  color: #cfc9de;
+}
