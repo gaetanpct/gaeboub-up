@@ -17,16 +17,35 @@
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
     const { BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES } = require("./board.js");
-    module.exports = factory(BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES);
+    const { POWERS, STEAL_AMOUNT, randomPowerId } = require("./powers.js");
+    const { WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent } = require("./world-events.js");
+    module.exports = factory(
+      BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
+      POWERS, STEAL_AMOUNT, randomPowerId,
+      WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent
+    );
   } else {
     const b = root.ReachUpBoard;
-    root.ReachUpEngine = factory(b.BOARD, b.CHANCE_CARDS, b.HOUSE_COST_BY_GROUP, b.RENT_MULTIPLIERS_BY_HOUSES);
+    const p = root.ReachUpPowers;
+    const w = root.ReachUpWorldEvents;
+    root.ReachUpEngine = factory(
+      b.BOARD, b.CHANCE_CARDS, b.HOUSE_COST_BY_GROUP, b.RENT_MULTIPLIERS_BY_HOUSES,
+      p.POWERS, p.STEAL_AMOUNT, p.randomPowerId,
+      w.WORLD_EVENTS, w.EVENT_DURATION_TURNS, w.FREQUENCY_PROBABILITY, w.randomEvent
+    );
   }
-})(typeof window !== "undefined" ? window : globalThis, function (BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES) {
+})(typeof window !== "undefined" ? window : globalThis, function (
+  BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
+  POWERS, STEAL_AMOUNT, randomPowerId,
+  WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent
+) {
   const STARTING_MONEY = 1500;
   const SALARY = 200;
   const JAIL_FINE = 50;
   const MAX_JAIL_TURNS = 3;
+  const INSURANCE_PREMIUM = 100;
+  const INSURANCE_COVERAGE_PERCENT = 50;
+  const INSURANCE_DURATION_TURNS = 8;
 
   class GameEngine {
     /**
@@ -60,8 +79,18 @@
       this.diceSides = options.diceSides || 6;
       this.auctionMode = options.auctionMode === "classic" ? "classic" : "secret";
       this.tradeTaxPercent = options.tradeTaxPercent || 0;
+      this.worldEventsEnabled = !!options.worldEventsEnabled;
+      this.worldEventFrequency = options.worldEventFrequency || "normal";
+      this.activeEvent = null; // { id, turnsRemaining }
+      this.turnDirection = 1; // 1 = normal, -1 = inversé (événement "rank_reversal")
+      this.loansEnabled = !!options.loansEnabled;
+      this.insuranceEnabled = !!options.insuranceEnabled;
+      this.loans = []; // prêts actifs (acceptés) : { id, lenderId, borrowerId, principal, interestRate, totalOwed, turnsRemaining }
+      this.loanOffers = []; // propositions de prêt en attente de réponse
+      this._nextLoanId = 1;
 
       const startingMoney = options.startingMoney || STARTING_MONEY;
+      this.powersEnabled = !!options.powersEnabled;
       this.players = playerNames.map((name, id) => ({
         id,
         name,
@@ -71,6 +100,8 @@
         jailTurns: 0,
         jailFreeCards: 0,
         bankrupt: false,
+        power: this.powersEnabled ? { id: randomPowerId(), used: false } : null,
+        insurance: null, // { turnsRemaining, coveragePercent }
       }));
 
       this.decideBuy =
@@ -82,6 +113,13 @@
       this.log = [];
       this.gameOver = false;
       this.winner = null;
+
+      if (this.powersEnabled) {
+        this.players.forEach((p) => {
+          const power = POWERS.find((pw) => pw.id === p.power.id);
+          this.addLog(`${power.icon} ${p.name} reçoit le pouvoir "${power.name}" : ${power.description}`);
+        });
+      }
 
       // État "pas à pas", utilisé par le mode interactif (Phase 3+)
       this.doublesStreak = 0;
@@ -132,8 +170,10 @@
       const passedGo = collectSalaryIfPassed && index <= player.position && !(player.position === 0);
       player.position = index;
       if (passedGo) {
-        this.pay(null, player, this.salary);
-        this.addLog(`${player.name} passe par la case Départ et touche ${this.salary}.`);
+        const doubled = this.activeEvent && this.activeEvent.id === "double_salary";
+        const salaryAmount = doubled ? this.salary * 2 : this.salary;
+        this.pay(null, player, salaryAmount);
+        this.addLog(`${player.name} passe par la case Départ et touche ${salaryAmount}${doubled ? " (salaire doublé !)" : ""}.`);
       }
     }
 
@@ -149,6 +189,68 @@
     ownsFullSet(playerId, group) {
       const tilesOfGroup = this.board.filter((t) => t.type === "property" && t.group === group);
       return tilesOfGroup.every((t) => t.owner === playerId);
+    }
+
+    // ---- Pouvoirs — Phase 8c ----
+    // Applique (et consomme) le pouvoir "loyer doublé" du propriétaire s'il
+    // en a un disponible. Renvoie le loyer éventuellement doublé.
+    _applyDoubleRentPower(owner, rent) {
+      if (owner.power && owner.power.id === "double_rent" && !owner.power.used) {
+        owner.power.used = true;
+        this.addLog(`💰 ${owner.name} utilise son pouvoir : loyer doublé !`);
+        return rent * 2;
+      }
+      return rent;
+    }
+
+    // Paie un loyer en tenant compte d'une éventuelle assurance active chez
+    // le payeur (Phase 8e) : il paie moins, le propriétaire touche quand
+    // même le plein montant, la différence est prise en charge par la banque.
+    _payRentWithInsurance(payer, owner, rent) {
+      if (payer.insurance && payer.insurance.turnsRemaining > 0) {
+        const covered = Math.floor((rent * payer.insurance.coveragePercent) / 100);
+        const payerShare = rent - covered;
+        this.pay(payer, owner, payerShare);
+        if (covered > 0) {
+          this.pay(null, owner, covered);
+          this.addLog(`🛡️ L'assurance de ${payer.name} prend en charge ${covered} sur ce loyer.`);
+        }
+        return;
+      }
+      this.pay(payer, owner, rent);
+    }
+
+    // Pouvoir actif "Téléportation" : utilisable à tout moment (pas
+    // seulement à son tour), une seule fois par partie.
+    useTeleportPower(playerId, tileIndex) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!player.power || player.power.id !== "teleport") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+      if (tileIndex < 0 || tileIndex >= this.board.length) return { ok: false, reason: "Case invalide." };
+
+      player.power.used = true;
+      player.position = tileIndex;
+      const tile = this.board[tileIndex];
+      this.addLog(`🌀 ${player.name} utilise son pouvoir de téléportation et apparaît sur "${tile.name}" !`);
+      return { ok: true };
+    }
+
+    // Pouvoir actif "Vol" : vole jusqu'à STEAL_AMOUNT à un adversaire,
+    // utilisable à tout moment, une seule fois par partie.
+    useStealPower(playerId, targetId) {
+      const player = this.players[playerId];
+      const target = this.players[targetId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!target || target.bankrupt || targetId === playerId) return { ok: false, reason: "Cible invalide." };
+      if (!player.power || player.power.id !== "theft") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+
+      player.power.used = true;
+      const amount = Math.min(STEAL_AMOUNT, target.money);
+      this.pay(target, player, amount);
+      this.addLog(`🗝️ ${player.name} utilise son pouvoir de vol et dérobe ${amount} à ${target.name} !`);
+      return { ok: true };
     }
 
     // ---- Construction (maisons/hôtel) — Phase 6 ----
@@ -215,8 +317,10 @@
       const tile = this.board[tileIndex];
       const player = this.players[playerId];
       tile.houses -= 1;
-      this.pay(null, player, check.refund);
-      this.addLog(`${player.name} vend une maison sur ${tile.name} pour ${check.refund}.`);
+      const isFree = this.activeEvent && this.activeEvent.id === "free_sales";
+      const refund = isFree ? HOUSE_COST_BY_GROUP[tile.group] : check.refund;
+      this.pay(null, player, refund);
+      this.addLog(`${player.name} vend une maison sur ${tile.name} pour ${refund}${isFree ? " (Ventes gratuites !)" : ""}.`);
       return { ok: true };
     }
 
@@ -288,7 +392,8 @@
               rent = this.ownsFullSet(tile.owner, tile.group) ? tile.rent * 2 : tile.rent;
             }
             const owner = this.players[tile.owner];
-            this.pay(player, owner, rent);
+            rent = this._applyDoubleRentPower(owner, rent);
+            this._payRentWithInsurance(player, owner, rent);
             const buildingNote = tile.houses === 5 ? " (hôtel)" : tile.houses > 0 ? ` (${tile.houses} maison(s))` : "";
             this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}${buildingNote}).`);
           }
@@ -303,8 +408,9 @@
             const owner = this.players[tile.owner];
             const count = this.board.filter((t) => t.type === "airport" && t.owner === tile.owner && !t.mortgaged).length;
             const rentTable = [25, 50, 100, 200];
-            const rent = rentTable[Math.max(count - 1, 0)];
-            this.pay(player, owner, rent);
+            let rent = rentTable[Math.max(count - 1, 0)];
+            rent = this._applyDoubleRentPower(owner, rent);
+            this._payRentWithInsurance(player, owner, rent);
             this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}).`);
           }
           break;
@@ -318,13 +424,19 @@
             const owner = this.players[tile.owner];
             const count = this.board.filter((t) => t.type === "utility" && t.owner === tile.owner && !t.mortgaged).length;
             const multiplier = count === 1 ? 4 : 10;
-            const rent = diceSum * multiplier;
-            this.pay(player, owner, rent);
+            let rent = diceSum * multiplier;
+            rent = this._applyDoubleRentPower(owner, rent);
+            this._payRentWithInsurance(player, owner, rent);
             this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}, ${count === 1 ? "x4" : "x10"} le lancer de dés).`);
           }
           break;
         }
         case "tax": {
+          if (player.power && player.power.id === "tax_immunity" && !player.power.used) {
+            player.power.used = true;
+            this.addLog(`🛡️ ${player.name} utilise son immunité fiscale : ${tile.name} ne lui coûte rien !`);
+            break;
+          }
           this.pay(player, null, tile.amount);
           if (this.vacationPotEnabled) {
             this.vacationPot += tile.amount;
@@ -344,6 +456,10 @@
         }
         case "chance":
         case "special": {
+          if (tile.type === "special" && this.worldEventsEnabled && !this.activeEvent) {
+            this._startRandomWorldEvent();
+            break;
+          }
           const card = CHANCE_CARDS[Math.floor(Math.random() * CHANCE_CARDS.length)];
           const label = tile.type === "special" ? "Carte Spéciale" : "Carte Destin";
           this.addLog(`${player.name} tire une ${label} : "${card.description}"`);
@@ -423,12 +539,42 @@
     }
 
     nextPlayer() {
+      this._tickPersonalTimers(this.currentPlayerIndex);
       do {
-        this.currentPlayerIndex = (this.currentPlayerIndex + 1) % this.players.length;
+        this.currentPlayerIndex =
+          (this.currentPlayerIndex + this.turnDirection + this.players.length) % this.players.length;
       } while (this.players[this.currentPlayerIndex].bankrupt);
       this.doublesStreak = 0;
       this.turnNumber += 1;
       this._turnBannerLogged = false;
+
+      this._tickWorldEvent();
+    }
+
+    // ---- Événements mondiaux temporaires — Phase 8d ----
+    _startRandomWorldEvent() {
+      const event = randomEvent();
+      this.activeEvent = { id: event.id, turnsRemaining: EVENT_DURATION_TURNS };
+      if (event.id === "rank_reversal") this.turnDirection = -1;
+      this.addLog(`${event.icon} Événement mondial : "${event.name}" ! ${event.description} (${EVENT_DURATION_TURNS} tours)`);
+    }
+
+    _tickWorldEvent() {
+      if (this.activeEvent) {
+        this.activeEvent.turnsRemaining -= 1;
+        if (this.activeEvent.turnsRemaining <= 0) {
+          const ended = WORLD_EVENTS.find((e) => e.id === this.activeEvent.id);
+          this.addLog(`${ended.icon} L'événement "${ended.name}" est terminé.`);
+          if (this.activeEvent.id === "rank_reversal") this.turnDirection = 1;
+          this.activeEvent = null;
+        }
+        return;
+      }
+      if (!this.worldEventsEnabled) return;
+      const probability = FREQUENCY_PROBABILITY[this.worldEventFrequency] || FREQUENCY_PROBABILITY.normal;
+      if (Math.random() < probability) {
+        this._startRandomWorldEvent();
+      }
     }
 
     // Tentative de sortie de prison (carte, double, ou 3e tour = amende).
@@ -511,9 +657,10 @@
 
       const [d1, d2] = this.rollDice();
       const isDouble = d1 === d2;
-      const sum = d1 + d2;
+      let sum = d1 + d2;
+      if (this.activeEvent && this.activeEvent.id === "double_movement") sum *= 2;
       this.lastRoll = { playerId: player.id, d1, d2, isDouble, inJailRoll: false };
-      this.addLog(`${player.name} lance les dés : ${d1} et ${d2}${isDouble ? " (double !)" : ""}.`);
+      this.addLog(`${player.name} lance les dés : ${d1} et ${d2}${isDouble ? " (double !)" : ""}${this.activeEvent && this.activeEvent.id === "double_movement" ? " — déplacement doublé !" : ""}.`);
 
       this.doublesStreak = isDouble ? this.doublesStreak + 1 : 0;
 
@@ -531,8 +678,9 @@
 
       const ownableTypes = ["property", "airport", "utility"];
       if (ownableTypes.includes(tile.type) && tile.owner === null) {
-        if (player.money >= tile.price) {
-          this.pendingDecision = { type: "buy", tileIndex: player.position, playerId: player.id };
+        const effectivePrice = this._effectivePrice(tile.price);
+        if (player.money >= effectivePrice) {
+          this.pendingDecision = { type: "buy", tileIndex: player.position, playerId: player.id, price: effectivePrice };
           this._pendingDiceWasDouble = isDouble;
         } else {
           this.addLog(`${player.name} n'a pas les moyens d'acheter ${tile.name}.`);
@@ -548,15 +696,26 @@
 
     // Répond à une décision d'achat en attente. playerId doit correspondre
     // au joueur concerné par pendingDecision (sécurité côté serveur en plus).
+    // Prix réellement payé pour une case, en tenant compte de l'événement
+    // "Réduction des prix" (Phase 8d) s'il est actif.
+    _effectivePrice(price) {
+      if (this.activeEvent && this.activeEvent.id === "price_reduction") {
+        return Math.floor(price * 0.75);
+      }
+      return price;
+    }
+
     decide(playerId, buy) {
       if (!this.pendingDecision || this.pendingDecision.playerId !== playerId) return;
       const tile = this.board[this.pendingDecision.tileIndex];
       const player = this.players[playerId];
 
       if (buy) {
-        this.pay(player, null, tile.price);
+        const price = this.pendingDecision.price;
+        this.pay(player, null, price);
         tile.owner = player.id;
-        this.addLog(`${player.name} achète ${tile.name} pour ${tile.price}.`);
+        const discounted = this.activeEvent && this.activeEvent.id === "price_reduction";
+        this.addLog(`${player.name} achète ${tile.name} pour ${price}${discounted ? " (prix réduit !)" : ""}.`);
 
         const wasDouble = this._pendingDiceWasDouble;
         this.pendingDecision = null;
@@ -711,6 +870,9 @@
     // jeu : n'importe qui peut en proposer ou en accepter à tout moment,
     // même si ce n'est pas son tour.
     proposeTrade(fromId, toId, offerTiles, offerMoney, requestTiles, requestMoney) {
+      if (this.activeEvent && this.activeEvent.id === "trade_freeze") {
+        return { ok: false, reason: "Les échanges sont gelés pour le moment (événement mondial en cours)." };
+      }
       const from = this.players[fromId];
       const to = this.players[toId];
       if (!from || !to || from.bankrupt || to.bankrupt || fromId === toId) {
@@ -759,6 +921,10 @@
         return { ok: true };
       }
 
+      if (this.activeEvent && this.activeEvent.id === "trade_freeze") {
+        return { ok: false, reason: "Les échanges sont gelés pour le moment (événement mondial en cours)." };
+      }
+
       // On revérifie que tout est toujours valide au moment de l'acceptation
       // (une propriété a pu être vendue/hypothéquée entre-temps).
       const from = this.players[trade.fromId];
@@ -796,6 +962,151 @@
       return { ok: true };
     }
 
+    // ---- Prêts entre joueurs — Phase 8e ----
+    // Le prêteur choisit librement le montant, le taux d'intérêt et la
+    // durée. Contrairement aux échanges, un prêt ne bloque jamais le jeu.
+    proposeLoan(lenderId, borrowerId, amount, interestRatePercent, durationTurns) {
+      if (!this.loansEnabled) return { ok: false, reason: "Les prêts ne sont pas activés pour cette partie." };
+
+      const lender = this.players[lenderId];
+      const borrower = this.players[borrowerId];
+      if (!lender || !borrower || lender.bankrupt || borrower.bankrupt || lenderId === borrowerId) {
+        return { ok: false, reason: "Prêt impossible avec ce joueur." };
+      }
+
+      const principal = Math.max(1, Math.floor(Number(amount) || 0));
+      if (principal > lender.money) return { ok: false, reason: "Tu ne peux pas prêter plus que ce que tu as." };
+
+      const rate = Math.max(0, Math.min(200, Math.floor(Number(interestRatePercent) || 0)));
+      const duration = Math.max(1, Math.min(20, Math.floor(Number(durationTurns) || 5)));
+      // Calcul en entiers pour éviter les imprécisions flottantes
+      // (ex: 200 * 1.1 peut donner 220.00000000000003 en JavaScript).
+      const totalOwed = Math.ceil((principal * (100 + rate)) / 100);
+
+      const offer = { id: this._nextLoanId++, lenderId, borrowerId, principal, interestRate: rate, duration, totalOwed };
+      this.loanOffers.push(offer);
+      this.addLog(
+        `💳 ${lender.name} propose un prêt de ${principal} à ${borrower.name} (taux ${rate}%, à rembourser en ${duration} tours, total dû : ${totalOwed}).`
+      );
+      return { ok: true, offerId: offer.id };
+    }
+
+    respondLoan(offerId, playerId, accept) {
+      const idx = this.loanOffers.findIndex((o) => o.id === offerId);
+      if (idx === -1) return { ok: false, reason: "Cette proposition n'existe plus." };
+      const offer = this.loanOffers[idx];
+      if (offer.borrowerId !== playerId) return { ok: false, reason: "Cette proposition ne t'est pas destinée." };
+
+      if (!accept) {
+        this.loanOffers.splice(idx, 1);
+        this.addLog(`${this.players[playerId].name} refuse le prêt proposé par ${this.players[offer.lenderId].name}.`);
+        return { ok: true };
+      }
+
+      const lender = this.players[offer.lenderId];
+      const borrower = this.players[offer.borrowerId];
+      if (lender.money < offer.principal) {
+        this.loanOffers.splice(idx, 1);
+        return { ok: false, reason: "Le prêteur n'a plus assez d'argent pour ce prêt." };
+      }
+
+      this.pay(lender, borrower, offer.principal);
+      this.loans.push({
+        id: offer.id,
+        lenderId: offer.lenderId,
+        borrowerId: offer.borrowerId,
+        principal: offer.principal,
+        interestRate: offer.interestRate,
+        totalOwed: offer.totalOwed,
+        turnsRemaining: offer.duration,
+      });
+      this.loanOffers.splice(idx, 1);
+      this.addLog(
+        `💳 ${borrower.name} accepte le prêt de ${lender.name} : ${offer.principal} reçus maintenant, ${offer.totalOwed} à rembourser dans ${offer.duration} tours.`
+      );
+      return { ok: true };
+    }
+
+    cancelLoanOffer(offerId, playerId) {
+      const idx = this.loanOffers.findIndex((o) => o.id === offerId);
+      if (idx === -1) return { ok: false, reason: "Cette proposition n'existe plus." };
+      if (this.loanOffers[idx].lenderId !== playerId) return { ok: false, reason: "Tu ne peux annuler que tes propres propositions." };
+      this.loanOffers.splice(idx, 1);
+      this.addLog(`${this.players[playerId].name} annule sa proposition de prêt.`);
+      return { ok: true };
+    }
+
+    // Remboursement volontaire, avant l'échéance.
+    repayLoanEarly(loanId, playerId) {
+      const idx = this.loans.findIndex((l) => l.id === loanId);
+      if (idx === -1) return { ok: false, reason: "Ce prêt n'existe plus." };
+      const loan = this.loans[idx];
+      if (loan.borrowerId !== playerId) return { ok: false, reason: "Ce n'est pas ta dette à rembourser." };
+      const borrower = this.players[playerId];
+      if (borrower.money < loan.totalOwed) return { ok: false, reason: "Pas assez d'argent pour rembourser maintenant." };
+
+      const lender = this.players[loan.lenderId];
+      this.pay(borrower, lender, loan.totalOwed);
+      this.loans.splice(idx, 1);
+      this.addLog(`💳 ${borrower.name} rembourse par anticipation son prêt à ${lender.name} (${loan.totalOwed}).`);
+      return { ok: true };
+    }
+
+    // Échéance forcée d'un prêt arrivé à son terme (turnsRemaining à 0).
+    _settleLoan(loan) {
+      const borrower = this.players[loan.borrowerId];
+      const lender = this.players[loan.lenderId];
+      this.pay(borrower, lender, loan.totalOwed);
+      this.addLog(
+        `💳 Échéance du prêt : ${borrower.name} rembourse ${loan.totalOwed} à ${lender.name} (prêt de ${loan.principal} + intérêts).`
+      );
+    }
+
+    // Fait avancer d'un tour les prêts ET l'assurance du joueur dont le
+    // tour vient de se terminer. Appelé depuis nextPlayer().
+    _tickPersonalTimers(playerId) {
+      const dueLoans = [];
+      this.loans.forEach((loan) => {
+        if (loan.borrowerId !== playerId) return;
+        loan.turnsRemaining -= 1;
+        if (loan.turnsRemaining <= 0) dueLoans.push(loan);
+      });
+      dueLoans.forEach((loan) => this._settleLoan(loan));
+      this.loans = this.loans.filter((loan) => loan.turnsRemaining > 0);
+      if (dueLoans.length > 0) {
+        const borrower = this.players[playerId];
+        this.checkBankruptcy(borrower);
+        this.checkVictory();
+      }
+
+      const player = this.players[playerId];
+      if (player.insurance && player.insurance.turnsRemaining > 0) {
+        player.insurance.turnsRemaining -= 1;
+        if (player.insurance.turnsRemaining <= 0) {
+          player.insurance = null;
+          this.addLog(`🛡️ L'assurance de ${player.name} a expiré.`);
+        }
+      }
+    }
+
+    // ---- Assurance — Phase 8e ----
+    buyInsurance(playerId) {
+      if (!this.insuranceEnabled) return { ok: false, reason: "L'assurance n'est pas activée pour cette partie." };
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (player.insurance && player.insurance.turnsRemaining > 0) {
+        return { ok: false, reason: "Tu as déjà une assurance active." };
+      }
+      if (player.money < INSURANCE_PREMIUM) return { ok: false, reason: "Pas assez d'argent pour souscrire une assurance." };
+
+      this.pay(player, null, INSURANCE_PREMIUM);
+      player.insurance = { turnsRemaining: INSURANCE_DURATION_TURNS, coveragePercent: INSURANCE_COVERAGE_PERCENT };
+      this.addLog(
+        `🛡️ ${player.name} souscrit une assurance pour ${INSURANCE_PREMIUM} (${INSURANCE_COVERAGE_PERCENT}% des loyers pris en charge pendant ${INSURANCE_DURATION_TURNS} tours).`
+      );
+      return { ok: true };
+    }
+
     // Snapshot complet et public de l'état de la partie (aucune information
     // cachée dans ce jeu, donc pas besoin de vues différentes par joueur).
     getPublicState() {
@@ -808,6 +1119,9 @@
         lastRoll: this.lastRoll,
         vacationPot: this.vacationPotEnabled ? this.vacationPot : null,
         turnLimit: this.turnLimit,
+        activeEvent: this.activeEvent ? { ...this.activeEvent } : null,
+        loansEnabled: this.loansEnabled,
+        insuranceEnabled: this.insuranceEnabled,
         // Enchère secrète : on ne révèle jamais les montants avant la fin.
         // Enchère classique : tout est public (comme à la criée en vrai).
         pendingAuction: this.pendingAuction
@@ -827,6 +1141,8 @@
               }
           : null,
         tradeOffers: this.tradeOffers.map((t) => ({ ...t })),
+        loans: this.loans.map((l) => ({ ...l })),
+        loanOffers: this.loanOffers.map((o) => ({ ...o })),
         players: this.players.map((p) => ({
           id: p.id,
           name: p.name,
@@ -836,6 +1152,8 @@
           jailTurns: p.jailTurns,
           jailFreeCards: p.jailFreeCards,
           bankrupt: p.bankrupt,
+          power: p.power ? { ...p.power } : null,
+          insurance: p.insurance ? { ...p.insurance } : null,
         })),
         board: this.board.map((t) => ({
           type: t.type,

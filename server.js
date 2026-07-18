@@ -90,7 +90,7 @@ function broadcastGame(room) {
   room.players.forEach((p) => {
     const playerId = room.socketToPlayerId[p.socketId];
     const stateForPlayer = buildStateForPlayer(baseState, playerId, room.settings);
-    io.to(p.socketId).emit("game:update", { state: stateForPlayer });
+    io.to(p.socketId).emit("game:update", { state: stateForPlayer, settings: room.settings });
   });
 }
 
@@ -233,6 +233,7 @@ io.on("connection", (socket) => {
     io.to(room.code).emit("game:started", {
       state: room.engine.getPublicState(),
       socketToPlayerId: room.socketToPlayerId,
+      settings: room.settings,
     });
   });
 
@@ -402,6 +403,107 @@ io.on("connection", (socket) => {
     if (myPlayerId === undefined) return;
 
     const result = room.engine.cancelTrade(payload.tradeId, myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  // ---- Pouvoirs (Phase 8c) : jouable à tout moment, comme la gestion des propriétés ----
+  socket.on("game:useTeleport", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.useTeleportPower(myPlayerId, payload.tileIndex);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:useSteal", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.useStealPower(myPlayerId, payload.targetId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  // ---- Prêts entre joueurs (Phase 8e) ----
+  socket.on("game:proposeLoan", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.proposeLoan(myPlayerId, payload.toId, payload.amount, payload.interestRate, payload.duration);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Proposition impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:respondLoan", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.respondLoan(payload.offerId, myPlayerId, !!payload.accept);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:cancelLoan", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.cancelLoanOffer(payload.offerId, myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:repayLoan", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.repayLoanEarly(payload.loanId, myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  // ---- Assurance (Phase 8e) ----
+  socket.on("game:buyInsurance", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.buyInsurance(myPlayerId);
     if (!result || !result.ok) {
       socket.emit("room:error", (result && result.reason) || "Action impossible.");
       return;

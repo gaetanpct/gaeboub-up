@@ -27,6 +27,9 @@
     jaune: "#e0d35c",
     vert: "#6cd98f",
     bleu: "#5c8ee0",
+    violet: "#a05ce0",
+    rose: "#e05c9d",
+    gris: "#9aa0ab",
   };
 
   // Décalages (en % de la largeur/hauteur du plateau) pour que jusqu'à

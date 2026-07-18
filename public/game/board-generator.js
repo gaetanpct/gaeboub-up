@@ -40,6 +40,9 @@
     { group: "jaune", price: 270, rent: 23 },
     { group: "vert", price: 310, rent: 27 },
     { group: "bleu", price: 375, rent: 40 },
+    { group: "violet", price: 410, rent: 45 },
+    { group: "rose", price: 445, rent: 50 },
+    { group: "gris", price: 480, rent: 55 },
   ];
 
   // Réserves de noms par groupe (on recycle les noms du plateau fixe).
@@ -54,6 +57,9 @@
     jaune: ["Avenue du Parc", "Avenue des Sports", "Avenue Centrale", "Avenue Fleurie"],
     vert: ["Boulevard Saint-Michel", "Boulevard Saint-Germain", "Boulevard Haussmann", "Boulevard des Capucines"],
     bleu: ["Avenue des Champs", "Avenue Royale", "Avenue Impériale", "Avenue Prestige"],
+    violet: ["Rue Améthyste", "Rue Lavande", "Rue Glycine", "Rue Iris"],
+    rose: ["Avenue Magnolia", "Avenue Camélia", "Avenue Pivoine", "Avenue Fuchsia"],
+    gris: ["Boulevard Argenté", "Boulevard Platine", "Boulevard Perle", "Boulevard Opale"],
   };
 
   const SHORT_NAME_OVERRIDES = {
@@ -65,6 +71,9 @@
     "Avenue du Parc": "du Parc", "Avenue des Sports": "Sports", "Avenue Centrale": "Centrale", "Avenue Fleurie": "Fleurie",
     "Boulevard Saint-Michel": "St-Michel", "Boulevard Saint-Germain": "St-Germain", "Boulevard Haussmann": "Haussmann", "Boulevard des Capucines": "Capucines",
     "Avenue des Champs": "Champs", "Avenue Royale": "Royale", "Avenue Impériale": "Impériale", "Avenue Prestige": "Prestige",
+    "Rue Améthyste": "Améthyste", "Rue Lavande": "Lavande", "Rue Glycine": "Glycine", "Rue Iris": "Iris",
+    "Avenue Magnolia": "Magnolia", "Avenue Camélia": "Camélia", "Avenue Pivoine": "Pivoine", "Avenue Fuchsia": "Fuchsia",
+    "Boulevard Argenté": "Argenté", "Boulevard Platine": "Platine", "Boulevard Perle": "Perle", "Boulevard Opale": "Opale",
   };
 
   const COMPASS = ["Nord", "Est", "Sud", "Ouest"];
@@ -105,7 +114,7 @@
    */
   function generateBoard(params) {
     const totalTiles = params.totalTiles && params.totalTiles % 4 === 0 ? params.totalTiles : 40;
-    const numGroups = Math.max(3, Math.min(8, params.numGroups || 8));
+    let numGroups = Math.max(3, Math.min(GROUP_TIERS.length, params.numGroups || 8));
     const numChanceCards = Math.max(0, params.numChanceCards ?? 6);
     const numSpecialCards = Math.max(0, params.numSpecialCards ?? 0);
     const numTaxes = Math.max(0, params.numTaxes ?? 2);
@@ -136,7 +145,17 @@
     }
     fillerCount = effective.numChanceCards + effective.numSpecialCards + effective.numTaxes + effective.numAirports + effective.numUtilities;
 
-    const propertyBudget = nonCornerSlots - fillerCount;
+    let propertyBudget = nonCornerSlots - fillerCount;
+
+    // GARDE-FOU IMPORTANT : si même avec les fillers réduits il n'y a pas
+    // assez de place pour au moins 1 case par groupe demandé (typiquement
+    // : beaucoup de groupes + petit plateau), on réduit le nombre de
+    // groupes en conséquence plutôt que de produire un plateau incomplet
+    // (des cases "undefined") — c'est exactement le cas que ce changement
+    // (jusqu'à 11 groupes) pouvait déclencher sur un petit plateau.
+    if (numGroups > propertyBudget) {
+      numGroups = Math.max(1, propertyBudget);
+    }
 
     // 2) Distribue le budget de propriétés entre les groupes (taille 1 à 4
     //    chacun). On commence à 1 partout, puis on distribue le reste au

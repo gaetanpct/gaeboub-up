@@ -53,7 +53,9 @@
             { value: 32, label: "32" },
             { value: 36, label: "36" },
             { value: 40, label: "40 (classique)" },
-            { value: 44, label: "44 (plus long)" },
+            { value: 44, label: "44" },
+            { value: 48, label: "48" },
+            { value: 52, label: "52 (plus long)" },
           ],
         },
         {
@@ -67,6 +69,9 @@
             { value: 6, label: "6" },
             { value: 7, label: "7" },
             { value: 8, label: "8 (classique)" },
+            { value: 9, label: "9" },
+            { value: 10, label: "10" },
+            { value: 11, label: "11" },
           ],
         },
         {
@@ -87,6 +92,8 @@
           label: "Cartes Spéciales",
           type: "select",
           default: 0,
+          info:
+            "Si les événements mondiaux sont activés, tomber sur une carte Spéciale déclenche un événement temporaire (si aucun n'est déjà en cours). Sinon, elle tire un effet classique comme une carte Destin.",
           options: [
             { value: 0, label: "0 (classique)" },
             { value: 2, label: "2" },
@@ -127,6 +134,60 @@
             { value: 2, label: "2 (classique)" },
             { value: 3, label: "3" },
           ],
+        },
+      ],
+    },
+    {
+      category: "Événements",
+      rules: [
+        {
+          id: "worldEventsEnabled",
+          label: "🌍 Événements mondiaux temporaires",
+          type: "boolean",
+          default: false,
+          info:
+            "Un effet global aléatoire (inversion du sens de jeu, double déplacement, gel des échanges, ventes gratuites, réduction des prix, salaire doublé...) peut se déclencher, pour une durée limitée affichée à l'écran. Un seul actif à la fois.",
+        },
+        {
+          id: "worldEventFrequency",
+          label: "Fréquence",
+          type: "select",
+          default: "normal",
+          options: [
+            { value: "rare", label: "Rare" },
+            { value: "normal", label: "Normale" },
+            { value: "frequent", label: "Fréquente" },
+          ],
+        },
+      ],
+    },
+    {
+      category: "Pouvoirs",
+      rules: [
+        {
+          id: "powersEnabled",
+          label: "🔮 Chaque joueur reçoit un pouvoir aléatoire en début de partie",
+          type: "boolean",
+          default: false,
+        },
+      ],
+    },
+    {
+      category: "Prêts & Assurance",
+      rules: [
+        {
+          id: "loansEnabled",
+          label: "💳 Prêts entre joueurs",
+          type: "boolean",
+          default: false,
+          info: "Un joueur peut prêter de l'argent à un autre en choisissant librement le montant, le taux d'intérêt et la durée de remboursement. Tout est public : personne ne peut cacher une dette.",
+        },
+        {
+          id: "insuranceEnabled",
+          label: "🛡️ Assurance",
+          type: "boolean",
+          default: false,
+          info: "Un joueur peut souscrire une assurance (coût fixe) qui prend en charge une partie de ses loyers à payer pendant une durée limitée.",
         },
       ],
     },

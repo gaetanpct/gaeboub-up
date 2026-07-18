@@ -50,7 +50,9 @@ btnJoin.addEventListener("click", () => {
 });
 
 socket.on("room:error", (message) => {
-  if (!tradeModal.hidden) {
+  if (!loansModal.hidden) {
+    document.getElementById("loans-error").textContent = message;
+  } else if (!tradeModal.hidden) {
     document.getElementById("trade-error").textContent = message;
   } else if (!propertiesModal.hidden) {
     document.getElementById("properties-error").textContent = message;
@@ -93,12 +95,21 @@ function findRuleDef(ruleId) {
   return null;
 }
 
+function renderInfoButton(rule) {
+  if (!rule.info) return "";
+  return `
+    <button type="button" class="info-toggle" data-info-toggle="${rule.id}" title="Plus d'informations">ℹ️</button>
+    <p class="info-text" data-info-text="${rule.id}" hidden>${rule.info}</p>
+  `;
+}
+
 function renderRuleControl(rule, value) {
   if (rule.type === "boolean") {
     return `
       <label class="checkbox-label">
         <input type="checkbox" data-rule-id="${rule.id}" data-rule-type="boolean" ${value ? "checked" : ""} />
         ${rule.label}
+        ${renderInfoButton(rule)}
       </label>
     `;
   }
@@ -112,7 +123,7 @@ function renderRuleControl(rule, value) {
     .join("");
   return `
     <label>
-      ${rule.label}
+      ${rule.label} ${renderInfoButton(rule)}
       <select data-rule-id="${rule.id}" data-rule-type="select">${optionsHtml}</select>
     </label>
   `;
@@ -131,6 +142,15 @@ function renderSettingsForm(settings) {
   settingsContainer.querySelectorAll("[data-rule-id]").forEach((el) => {
     el.disabled = !currentIsHost;
     el.addEventListener("change", emitSettingsChange);
+  });
+
+  settingsContainer.querySelectorAll("[data-info-toggle]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      const ruleId = btn.dataset.infoToggle;
+      const textEl = settingsContainer.querySelector(`[data-info-text="${ruleId}"]`);
+      if (textEl) textEl.hidden = !textEl.hidden;
+    });
   });
 }
 
@@ -208,6 +228,17 @@ const btnOpenTrade = document.getElementById("btn-open-trade");
 const btnCloseTrade = document.getElementById("btn-close-trade");
 let tradeTargetId = null;
 
+const powerModal = document.getElementById("power-modal");
+const powerContent = document.getElementById("power-content");
+const btnOpenPower = document.getElementById("btn-open-power");
+const btnClosePower = document.getElementById("btn-close-power");
+
+const loansModal = document.getElementById("loans-modal");
+const loansContent = document.getElementById("loans-content");
+const btnOpenLoans = document.getElementById("btn-open-loans");
+const btnCloseLoans = document.getElementById("btn-close-loans");
+let loanTargetId = null;
+
 let latestGameState = null;
 
 btnOpenProperties.addEventListener("click", () => {
@@ -232,13 +263,39 @@ tradeModal.addEventListener("click", (event) => {
   if (event.target === tradeModal) tradeModal.hidden = true;
 });
 
-socket.on("game:started", ({ state, socketToPlayerId }) => {
+btnOpenPower.addEventListener("click", () => {
+  powerModal.hidden = false;
+  renderPowerModal();
+});
+btnClosePower.addEventListener("click", () => {
+  powerModal.hidden = true;
+});
+powerModal.addEventListener("click", (event) => {
+  if (event.target === powerModal) powerModal.hidden = true;
+});
+
+btnOpenLoans.addEventListener("click", () => {
+  loansModal.hidden = false;
+  renderLoansModal();
+});
+btnCloseLoans.addEventListener("click", () => {
+  loansModal.hidden = true;
+});
+loansModal.addEventListener("click", (event) => {
+  if (event.target === loansModal) loansModal.hidden = true;
+});
+
+let latestGameSettings = null;
+
+socket.on("game:started", ({ state, socketToPlayerId, settings }) => {
   myPlayerId = socketToPlayerId[socket.id];
+  latestGameSettings = settings || null;
   showScreen("game");
   renderGame(state);
 });
 
-socket.on("game:update", ({ state }) => {
+socket.on("game:update", ({ state, settings }) => {
+  if (settings) latestGameSettings = settings;
   renderGame(state);
 });
 
@@ -248,8 +305,68 @@ function renderGame(state) {
   renderPlayers(state);
   renderActionArea(state);
   renderLog(state);
+  renderActiveEventBanner(state);
+  renderActiveRulesPanel(state);
   if (!propertiesModal.hidden) renderPropertiesModal();
   if (!tradeModal.hidden) renderTradeModal();
+  if (!powerModal.hidden) renderPowerModal();
+  if (!loansModal.hidden) renderLoansModal();
+
+  const me = state.players.find((p) => p.id === myPlayerId);
+  btnOpenPower.hidden = !me || !me.power;
+  btnOpenLoans.hidden = !(state.loansEnabled || state.insuranceEnabled);
+}
+
+function renderActiveEventBanner(state) {
+  const banner = document.getElementById("active-event-banner");
+  if (!state.activeEvent) {
+    banner.hidden = true;
+    return;
+  }
+  const event = ReachUpWorldEvents.findEvent(state.activeEvent.id);
+  banner.hidden = false;
+  banner.textContent = `${event.icon} ${event.name} — ${event.description} (${state.activeEvent.turnsRemaining} tour(s) restant(s))`;
+}
+
+// Panneau "Règles actives" — Phase 8f. Générique : compare les réglages
+// reçus aux valeurs par défaut du schéma (RULES_SCHEMA) et n'affiche que
+// ce qui a été réellement changé pour cette partie, plus l'événement
+// mondial en cours s'il y en a un. Comme il se base sur le schéma, toute
+// nouvelle règle ajoutée plus tard y apparaît automatiquement.
+function renderActiveRulesPanel(state) {
+  const panel = document.getElementById("active-rules-panel");
+  const chipsContainer = document.getElementById("active-rules-chips");
+  const chips = [];
+
+  if (state.activeEvent) {
+    const event = ReachUpWorldEvents.findEvent(state.activeEvent.id);
+    chips.push(`<span class="rule-chip rule-chip--event">${event.icon} ${event.name} (${state.activeEvent.turnsRemaining}t)</span>`);
+  }
+
+  if (latestGameSettings) {
+    RULES_SCHEMA.forEach((category) => {
+      category.rules.forEach((rule) => {
+        const value = latestGameSettings[rule.id];
+        if (value === rule.default) return; // rien de spécial pour cette règle, on ne l'affiche pas
+
+        let text;
+        if (rule.type === "boolean") {
+          text = rule.label.replace(/^[^\w]*\s*/, ""); // retire l'emoji déjà présent dans le libellé
+        } else {
+          const option = rule.options.find((o) => o.value === value);
+          text = `${rule.label} : ${option ? option.label : value}`;
+        }
+        chips.push(`<span class="rule-chip">${text}</span>`);
+      });
+    });
+  }
+
+  if (chips.length === 0) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  chipsContainer.innerHTML = chips.join("");
 }
 
 function renderPlayers(state) {
@@ -276,6 +393,7 @@ function renderPlayers(state) {
       <p>💰 ${player.money}</p>
       <p>📍 ${tile.name}</p>
       <p>🏷️ ${propertiesCount} propriété(s)</p>
+      ${player.power ? `<p class="power-badge">${ReachUpPowers.findPower(player.power.id).icon} ${ReachUpPowers.findPower(player.power.id).name}${player.power.used ? " (utilisé)" : ""}</p>` : ""}
       <p class="player-status">${statusLabel}</p>
     `;
     playersPanel.appendChild(card);
@@ -481,6 +599,207 @@ function renderPropertyRow(tile, index) {
         ${tile.mortgaged ? '<span class="mortgaged-tag">Hypothéquée</span>' : ""}
       </div>
       <div class="property-row__actions">${buttons.join("")}</div>
+    </div>
+  `;
+}
+
+function renderPowerModal() {
+  if (!latestGameState) return;
+  document.getElementById("power-error").textContent = "";
+
+  const me = latestGameState.players.find((p) => p.id === myPlayerId);
+  if (!me || !me.power) {
+    powerContent.innerHTML = `<p class="properties-empty">Tu n'as reçu aucun pouvoir pour cette partie.</p>`;
+    return;
+  }
+
+  const power = ReachUpPowers.findPower(me.power.id);
+  let html = `
+    <div class="property-row">
+      <div class="property-row__info">
+        <strong>${power.icon} ${power.name}</strong><br />
+        ${power.description}
+      </div>
+    </div>
+  `;
+
+  if (me.power.used) {
+    html += `<p class="properties-empty">Ce pouvoir a déjà été utilisé.</p>`;
+  } else if (power.type === "passive") {
+    html += `<p class="properties-empty">Ce pouvoir s'active tout seul au bon moment, rien à faire.</p>`;
+  } else if (power.id === "teleport") {
+    const options = latestGameState.board.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
+    html += `
+      <div class="trade-form">
+        <label>Se téléporter sur
+          <select id="power-teleport-target">${options}</select>
+        </label>
+        <button id="btn-use-power" class="btn-primary">Utiliser le pouvoir</button>
+      </div>
+    `;
+  } else if (power.id === "theft") {
+    const others = latestGameState.players.filter((p) => p.id !== myPlayerId && !p.bankrupt);
+    if (others.length === 0) {
+      html += `<p class="properties-empty">Aucune cible disponible.</p>`;
+    } else {
+      const options = others.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+      html += `
+        <div class="trade-form">
+          <label>Voler
+            <select id="power-steal-target">${options}</select>
+          </label>
+          <button id="btn-use-power" class="btn-primary">Utiliser le pouvoir</button>
+        </div>
+      `;
+    }
+  }
+
+  powerContent.innerHTML = html;
+
+  const useBtn = document.getElementById("btn-use-power");
+  if (useBtn && power.id === "teleport") {
+    useBtn.addEventListener("click", () => {
+      const tileIndex = Number(document.getElementById("power-teleport-target").value);
+      socket.emit("game:useTeleport", { tileIndex });
+    });
+  } else if (useBtn && power.id === "theft") {
+    useBtn.addEventListener("click", () => {
+      const targetId = Number(document.getElementById("power-steal-target").value);
+      socket.emit("game:useSteal", { targetId });
+    });
+  }
+}
+
+function renderLoansModal() {
+  if (!latestGameState) return;
+  document.getElementById("loans-error").textContent = "";
+
+  let html = "";
+
+  if (latestGameState.loansEnabled) {
+    const others = latestGameState.players.filter((p) => p.id !== myPlayerId && !p.bankrupt);
+    if (loanTargetId === null || !others.some((p) => p.id === loanTargetId)) {
+      loanTargetId = others.length > 0 ? others[0].id : null;
+    }
+    const targetOptions = others
+      .map((p) => `<option value="${p.id}" ${p.id === loanTargetId ? "selected" : ""}>${p.name}</option>`)
+      .join("");
+
+    html += `<h3 class="trade-section-title">Proposer un prêt</h3>`;
+    html +=
+      others.length === 0
+        ? `<p class="properties-empty">Aucun autre joueur actif.</p>`
+        : `
+          <div class="trade-form">
+            <label>À qui <select id="loan-target">${targetOptions}</select></label>
+            <label>Montant <input type="number" id="loan-amount" min="1" value="100" /></label>
+            <label>Taux d'intérêt (%) <input type="number" id="loan-rate" min="0" max="200" value="10" /></label>
+            <label>Durée (tours) <input type="number" id="loan-duration" min="1" max="20" value="5" /></label>
+            <button id="btn-propose-loan" class="btn-primary">Proposer le prêt</button>
+          </div>
+        `;
+
+    const incoming = latestGameState.loanOffers.filter((o) => o.borrowerId === myPlayerId);
+    const outgoing = latestGameState.loanOffers.filter((o) => o.lenderId === myPlayerId);
+
+    html += `<h3 class="trade-section-title">📬 Offres de prêt reçues</h3>`;
+    html += incoming.length === 0 ? `<p class="properties-empty">Aucune.</p>` : incoming.map(renderIncomingLoanOffer).join("");
+
+    html += `<h3 class="trade-section-title">📤 Tes propositions</h3>`;
+    html += outgoing.length === 0 ? `<p class="properties-empty">Aucune.</p>` : outgoing.map(renderOutgoingLoanOffer).join("");
+
+    html += `<h3 class="trade-section-title">📒 Prêts en cours (visibles par tous)</h3>`;
+    html +=
+      latestGameState.loans.length === 0
+        ? `<p class="properties-empty">Aucun prêt en cours.</p>`
+        : latestGameState.loans.map(renderActiveLoan).join("");
+  }
+
+  if (latestGameState.insuranceEnabled) {
+    const me = latestGameState.players.find((p) => p.id === myPlayerId);
+    html += `<h3 class="trade-section-title">🛡️ Assurance</h3>`;
+    if (me.insurance) {
+      html += `<p class="properties-empty">Assurance active : ${me.insurance.coveragePercent}% des loyers pris en charge, encore ${me.insurance.turnsRemaining} tour(s).</p>`;
+    } else {
+      html += `
+        <div class="property-row">
+          <div class="property-row__info">Souscrire une assurance (coût 100, couvre 50% des loyers pendant 8 tours).</div>
+          <div class="property-row__actions"><button id="btn-buy-insurance" class="btn-primary">Souscrire</button></div>
+        </div>
+      `;
+    }
+  }
+
+  loansContent.innerHTML = html;
+
+  const targetSelect = document.getElementById("loan-target");
+  if (targetSelect) {
+    targetSelect.addEventListener("change", () => {
+      loanTargetId = Number(targetSelect.value);
+      renderLoansModal();
+    });
+  }
+
+  const proposeBtn = document.getElementById("btn-propose-loan");
+  if (proposeBtn) {
+    proposeBtn.addEventListener("click", () => {
+      const amount = Number(document.getElementById("loan-amount").value) || 0;
+      const interestRate = Number(document.getElementById("loan-rate").value) || 0;
+      const duration = Number(document.getElementById("loan-duration").value) || 1;
+      socket.emit("game:proposeLoan", { toId: loanTargetId, amount, interestRate, duration });
+    });
+  }
+
+  loansContent.querySelectorAll("[data-accept-loan]").forEach((btn) => {
+    btn.addEventListener("click", () => socket.emit("game:respondLoan", { offerId: Number(btn.dataset.acceptLoan), accept: true }));
+  });
+  loansContent.querySelectorAll("[data-reject-loan]").forEach((btn) => {
+    btn.addEventListener("click", () => socket.emit("game:respondLoan", { offerId: Number(btn.dataset.rejectLoan), accept: false }));
+  });
+  loansContent.querySelectorAll("[data-cancel-loan]").forEach((btn) => {
+    btn.addEventListener("click", () => socket.emit("game:cancelLoan", { offerId: Number(btn.dataset.cancelLoan) }));
+  });
+  loansContent.querySelectorAll("[data-repay-loan]").forEach((btn) => {
+    btn.addEventListener("click", () => socket.emit("game:repayLoan", { loanId: Number(btn.dataset.repayLoan) }));
+  });
+
+  const buyInsuranceBtn = document.getElementById("btn-buy-insurance");
+  if (buyInsuranceBtn) {
+    buyInsuranceBtn.addEventListener("click", () => socket.emit("game:buyInsurance"));
+  }
+}
+
+function renderIncomingLoanOffer(offer) {
+  const lender = latestGameState.players[offer.lenderId];
+  return `
+    <div class="property-row">
+      <div class="property-row__info"><strong>${lender.name}</strong> te propose ${offer.principal} à ${offer.interestRate}% (à rembourser : ${offer.totalOwed} en ${offer.duration} tours)</div>
+      <div class="property-row__actions">
+        <button data-accept-loan="${offer.id}" class="btn-primary">Accepter</button>
+        <button data-reject-loan="${offer.id}">Refuser</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderOutgoingLoanOffer(offer) {
+  const borrower = latestGameState.players[offer.borrowerId];
+  return `
+    <div class="property-row">
+      <div class="property-row__info">À <strong>${borrower.name}</strong> : ${offer.principal} à ${offer.interestRate}% (total dû : ${offer.totalOwed})</div>
+      <div class="property-row__actions"><button data-cancel-loan="${offer.id}">Annuler</button></div>
+    </div>
+  `;
+}
+
+function renderActiveLoan(loan) {
+  const lender = latestGameState.players[loan.lenderId];
+  const borrower = latestGameState.players[loan.borrowerId];
+  const isMine = loan.borrowerId === myPlayerId;
+  return `
+    <div class="property-row">
+      <div class="property-row__info">${borrower.name} doit ${loan.totalOwed} à ${lender.name} (${loan.turnsRemaining} tour(s) restant(s))</div>
+      <div class="property-row__actions">${isMine ? `<button data-repay-loan="${loan.id}">Rembourser maintenant</button>` : ""}</div>
     </div>
   `;
 }

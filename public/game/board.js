@@ -81,6 +81,9 @@
     jaune: 150,
     vert: 200,
     bleu: 200,
+    violet: 225,
+    rose: 225,
+    gris: 250,
   };
 
   // Multiplicateur de loyer selon le nombre de maisons (index = tile.houses).

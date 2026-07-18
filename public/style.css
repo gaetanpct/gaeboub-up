@@ -252,8 +252,29 @@ button:disabled {
 
 .board-container {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
   margin-bottom: 1.5rem;
+}
+
+.active-event-banner {
+  width: 100%;
+  max-width: 620px;
+  background: linear-gradient(90deg, #3a1f5c, #5c1f4a);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #ffd76a;
+  animation: event-pulse 2s ease-in-out infinite;
+}
+
+@keyframes event-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
 }
 
 .board-grid {
@@ -528,6 +549,7 @@ body.is-game-screen .app {
 .game-layout .board-container {
   flex: 0 0 auto;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   margin-bottom: 0;
@@ -583,6 +605,19 @@ body.is-game-screen .app {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.log-wrap--compact .log-title {
+  font-size: 0.75rem;
+  color: #6f6788;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+}
+
+.log-wrap--compact .log-panel {
+  font-size: 0.68rem;
+  opacity: 0.85;
 }
 
 .log-wrap .log-title {
@@ -864,4 +899,104 @@ body.is-game-screen .app {
   padding: 3px;
   gap: 1px;
   display: grid;
+}
+
+/* ============================================================
+   Bouton d'information (ℹ️) pour les règles qui en ont besoin
+   ============================================================ */
+
+.info-toggle {
+  background: none;
+  border: none;
+  padding: 0 0.2rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.info-text {
+  background: #130f1d;
+  border-left: 3px solid #6c4fd6;
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  margin: 0.3rem 0 0.5rem;
+  font-size: 0.78rem;
+  color: #cfc9de;
+  font-style: italic;
+}
+
+/* ============================================================
+   Phase 8c : pouvoirs des joueurs
+   ============================================================ */
+
+.power-badge {
+  color: #d9b8ff !important;
+  font-weight: 600;
+}
+
+/* ============================================================
+   Phase 8f : panneau des règles actives + boutons secondaires compacts
+   ============================================================ */
+
+.active-rules-panel {
+  background: #1e1830;
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  margin-bottom: 0.5rem;
+  flex: 0 0 auto;
+  max-height: 20%;
+  overflow-y: auto;
+}
+
+.active-rules-label {
+  display: block;
+  font-size: 0.68rem;
+  color: #9d94b3;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.3rem;
+}
+
+.active-rules-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.rule-chip {
+  background: #2a2340;
+  border: 1px solid #3a3350;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.7rem;
+  color: #d9b8ff;
+  white-space: nowrap;
+}
+
+.rule-chip--event {
+  background: #3a1f5c;
+  border-color: #5c1f4a;
+  color: #ffd76a;
+  font-weight: 600;
+}
+
+.secondary-actions-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  flex: 0 0 auto;
+}
+
+.btn-icon {
+  flex: 1;
+  background: #2a2340;
+  border: 1px solid #3a3350;
+  border-radius: 8px;
+  padding: 0.5rem;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  background: #352c4f;
 }
