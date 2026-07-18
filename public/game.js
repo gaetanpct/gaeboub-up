@@ -50,6 +50,7 @@ btnJoin.addEventListener("click", () => {
 });
 
 socket.on("room:error", (message) => {
+  ReachUpSounds.playError();
   if (!loansModal.hidden) {
     document.getElementById("loans-error").textContent = message;
   } else if (!tradeModal.hidden) {
@@ -233,6 +234,16 @@ const powerContent = document.getElementById("power-content");
 const btnOpenPower = document.getElementById("btn-open-power");
 const btnClosePower = document.getElementById("btn-close-power");
 
+const btnToggleSound = document.getElementById("btn-toggle-sound");
+function refreshSoundButton() {
+  btnToggleSound.textContent = ReachUpSounds.isMuted() ? "🔇" : "🔊";
+}
+refreshSoundButton();
+btnToggleSound.addEventListener("click", () => {
+  ReachUpSounds.toggleMuted();
+  refreshSoundButton();
+});
+
 const loansModal = document.getElementById("loans-modal");
 const loansContent = document.getElementById("loans-content");
 const btnOpenLoans = document.getElementById("btn-open-loans");
@@ -286,18 +297,39 @@ loansModal.addEventListener("click", (event) => {
 });
 
 let latestGameSettings = null;
+let lastLogLength = 0;
 
 socket.on("game:started", ({ state, socketToPlayerId, settings }) => {
   myPlayerId = socketToPlayerId[socket.id];
   latestGameSettings = settings || null;
+  lastLogLength = state.log.length; // pas de son rétroactif sur le journal déjà existant
   showScreen("game");
   renderGame(state);
 });
 
 socket.on("game:update", ({ state, settings }) => {
   if (settings) latestGameSettings = settings;
+  playSoundsForNewLogLines(state);
   renderGame(state);
 });
+
+// Ne connaît aucune règle du jeu : lit juste les nouvelles lignes du
+// journal (déjà écrites en langage humain par le moteur) et joue un son
+// adapté selon des mots-clés simples. Découplé du reste, donc n'importe
+// quelle action future produit un son "gratuitement" si son log contient
+// les bons mots, sans avoir à toucher au moteur.
+function playSoundsForNewLogLines(state) {
+  const newLines = state.log.slice(lastLogLength);
+  lastLogLength = state.log.length;
+
+  newLines.forEach((line) => {
+    if (line.includes("remporte la partie")) ReachUpSounds.playVictory();
+    else if (line.includes("faillite")) ReachUpSounds.playError();
+    else if (line.includes("lance les dés")) ReachUpSounds.playDiceRoll();
+    else if (line.includes("Carte Destin") || line.includes("Carte Spéciale") || line.includes("Événement mondial")) ReachUpSounds.playCardDraw();
+    else if (line.includes("achète") || line.includes("paie") || line.includes("rembourse") || line.includes("reçoit")) ReachUpSounds.playCoin();
+  });
+}
 
 function renderGame(state) {
   latestGameState = state;

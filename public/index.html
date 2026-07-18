@@ -68,7 +68,10 @@
   <section id="screen-game" class="screen screen-game" hidden>
     <div class="game-layout">
       <div class="board-container">
-        <div id="active-event-banner" class="active-event-banner" hidden></div>
+        <div class="board-top-row">
+          <div id="active-event-banner" class="active-event-banner" hidden></div>
+          <button id="btn-toggle-sound" class="btn-sound" title="Activer/couper le son">🔊</button>
+        </div>
         <div id="board-grid" class="board-grid"></div>
       </div>
 
@@ -146,6 +149,7 @@
   </section>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="sounds.js"></script>
   <script src="game/rules-schema.js"></script>
   <script src="game/powers.js"></script>
   <script src="game/world-events.js"></script>

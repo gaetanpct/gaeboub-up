@@ -202,12 +202,21 @@ button:disabled {
 
 .winner-banner {
   grid-column: 1 / -1;
-  background: #3a2f0f;
+  background: linear-gradient(135deg, #3a2f0f, #5c3f0f);
   color: #ffd76a;
-  padding: 0.75rem 1rem;
+  padding: 0.9rem 1rem;
   border-radius: 8px;
   font-weight: 700;
+  font-size: 1.05rem;
   text-align: center;
+  box-shadow: 0 0 20px rgba(255, 215, 106, 0.4);
+  animation: victory-pop 0.5s ease-out;
+}
+
+@keyframes victory-pop {
+  0% { transform: scale(0.85); opacity: 0; }
+  60% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 /* ---- Zone d'action (dés / achat / attente) ---- */
@@ -270,6 +279,37 @@ button:disabled {
   font-size: 0.9rem;
   color: #ffd76a;
   animation: event-pulse 2s ease-in-out infinite;
+}
+
+.board-top-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 620px;
+  justify-content: flex-end;
+}
+
+.board-top-row .active-event-banner {
+  flex: 1;
+  margin-bottom: 0;
+  max-width: none;
+}
+
+.btn-sound {
+  flex: 0 0 auto;
+  background: #1e1830;
+  border: 1px solid #3a3350;
+  border-radius: 8px;
+  width: 2.2rem;
+  height: 2.2rem;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-bottom: 0.5rem;
+}
+
+.btn-sound:hover {
+  background: #2a2340;
 }
 
 @keyframes event-pulse {
@@ -692,6 +732,12 @@ body.is-game-screen .app {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  animation: modal-pop 0.18s ease-out;
+}
+
+@keyframes modal-pop {
+  0% { transform: scale(0.94) translateY(6px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
 }
 
 .modal-header {
