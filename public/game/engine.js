@@ -17,12 +17,12 @@
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
     const { BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES } = require("./board.js");
-    const { POWERS, STEAL_AMOUNT, randomPowerId } = require("./powers.js");
+    const { POWERS, STEAL_AMOUNT, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId } = require("./powers.js");
     const { WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent } = require("./world-events.js");
     const { INSURANCE_PLANS } = require("./insurance-plans.js");
     module.exports = factory(
       BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
-      POWERS, STEAL_AMOUNT, randomPowerId,
+      POWERS, STEAL_AMOUNT, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId,
       WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
       INSURANCE_PLANS
     );
@@ -33,14 +33,14 @@
     const ins = root.ReachUpInsurance;
     root.ReachUpEngine = factory(
       b.BOARD, b.CHANCE_CARDS, b.HOUSE_COST_BY_GROUP, b.RENT_MULTIPLIERS_BY_HOUSES,
-      p.POWERS, p.STEAL_AMOUNT, p.randomPowerId,
+      p.POWERS, p.STEAL_AMOUNT, p.DOUBLE_RENT_CAP, p.DISCOUNT_PURCHASE_PERCENT, p.BANK_LOAN_AMOUNT, p.randomPowerId,
       w.WORLD_EVENTS, w.EVENT_DURATION_TURNS, w.FREQUENCY_PROBABILITY, w.randomEvent,
       ins.INSURANCE_PLANS
     );
   }
 })(typeof window !== "undefined" ? window : globalThis, function (
   BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
-  POWERS, STEAL_AMOUNT, randomPowerId,
+  POWERS, STEAL_AMOUNT, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId,
   WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
   INSURANCE_PLANS
 ) {
@@ -88,6 +88,11 @@
       this.turnDirection = 1; // 1 = normal, -1 = inversé (événement "rank_reversal")
       this.loansEnabled = !!options.loansEnabled;
       this.insuranceEnabled = !!options.insuranceEnabled;
+      this.insurancePrices = [
+        options.insurancePlan1Price !== undefined ? options.insurancePlan1Price : 60,
+        options.insurancePlan2Price !== undefined ? options.insurancePlan2Price : 100,
+        options.insurancePlan3Price !== undefined ? options.insurancePlan3Price : 150,
+      ];
       this.loans = []; // prêts actifs (acceptés) : { id, lenderId, borrowerId, principal, interestRate, totalOwed, turnsRemaining }
       this.loanOffers = []; // propositions de prêt en attente de réponse
       this._nextLoanId = 1;
@@ -195,6 +200,11 @@
     }
 
     sendToJail(player) {
+      if (player.power && player.power.id === "jail_skip" && !player.power.used) {
+        player.power.used = true;
+        this.addLog(`🕊️ ${player.name} utilise son pouvoir et évite la prison !`);
+        return;
+      }
       // La case Prison est toujours au premier quart du plateau (comme sur
       // le plateau fixe), quelle que soit la taille réelle de celui-ci.
       player.position = this.board.length / 4;
@@ -215,8 +225,9 @@
     _applyDoubleRentPower(owner, rent) {
       if (owner.power && owner.power.id === "double_rent" && !owner.power.used) {
         owner.power.used = true;
-        this.addLog(`💰 ${owner.name} utilise son pouvoir : loyer doublé !`);
-        return rent * 2;
+        const bonus = Math.min(rent, DOUBLE_RENT_CAP);
+        this.addLog(`💰 ${owner.name} utilise son pouvoir : loyer majoré de ${bonus} (plafonné à ${DOUBLE_RENT_CAP}) !`);
+        return rent + bonus;
       }
       return rent;
     }
@@ -254,6 +265,19 @@
       return { ok: true };
     }
 
+    // Pouvoir actif "Prêt bancaire" : reçoit un montant fixe de la banque,
+    // utilisable à tout moment, une seule fois par partie.
+    useBankLoanPower(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!player.power || player.power.id !== "bank_loan") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+
+      player.power.used = true;
+      this.pay(null, player, BANK_LOAN_AMOUNT);
+      this.addLog(`🏦 ${player.name} utilise son pouvoir et reçoit ${BANK_LOAN_AMOUNT} de la banque !`);
+      return { ok: true };
+    }
     // Pouvoir actif "Vol" : vole jusqu'à STEAL_AMOUNT à un adversaire,
     // utilisable à tout moment, une seule fois par partie.
     useStealPower(playerId, targetId) {
@@ -719,8 +743,59 @@
         return; // on attend maintenant un achat, une enchère, ou les deux à la suite
       }
 
+      this._pendingDiceWasDouble = isDouble;
       this.resolveTile(player, tile, sum);
-      this._afterRollResolved(isDouble);
+      // Une carte Destin/Spéciale tirée ici a pu elle-même déplacer le
+      // joueur vers une case achetable (ex: "avance de 3 cases") et donc
+      // mettre une décision ou une enchère en attente : dans ce cas, on
+      // ne conclut PAS encore ce lancer, on attend que ce soit réglé.
+      if (!this.pendingDecision && !this.pendingAuction) {
+        this._afterRollResolved(isDouble);
+      }
+    }
+
+    // Utilisé par certaines cartes Destin/Spéciales qui déplacent le
+    // joueur en cours de résolution (ex: "avance de 3 cases", "va à
+    // l'aéroport le plus proche"). Reproduit la même logique que
+    // l'arrivée normale sur une case (achat, enchère, loyer...), pour que
+    // la case soit traitée exactement comme si le joueur y était arrivé
+    // par les dés. Renvoie true si une décision/enchère est maintenant en
+    // attente (le tour ne doit alors pas être conclu tout de suite).
+    // Cherche la prochaine case d'un type donné en avançant depuis une
+    // position (utilisé par les cartes "fonce vers l'aéroport/la compagnie
+    // le·la plus proche"). Fonctionne quelle que soit la disposition du
+    // plateau (fixe ou généré).
+    _findNearestTileOfType(fromIndex, type) {
+      const len = this.board.length;
+      for (let step = 1; step <= len; step++) {
+        const idx = (fromIndex + step) % len;
+        if (this.board[idx].type === type) return idx;
+      }
+      return fromIndex; // filet de sécurité si ce type de case n'existe pas sur ce plateau
+    }
+
+    _landOnTile(player, newIndex) {
+      player.position = newIndex;
+      const tile = this.board[newIndex];
+      this.addLog(`${player.name} est déplacé sur "${tile.name}".`);
+
+      const ownableTypes = ["property", "airport", "utility"];
+      if (ownableTypes.includes(tile.type) && tile.owner === null) {
+        const effectivePrice = this._effectivePrice(tile.price);
+        if (player.money >= effectivePrice) {
+          this.pendingDecision = { type: "buy", tileIndex: newIndex, playerId: player.id, price: effectivePrice };
+          return true;
+        }
+        this.addLog(`${player.name} n'a pas les moyens d'acheter ${tile.name}.`);
+        this.startAuction(newIndex, { triggeredByRoll: true });
+        return true;
+      }
+
+      // Le loyer d'une compagnie dépend d'un lancer de dés : on en tire un
+      // petit spécifiquement pour ça (le déplacement lui-même vient de la carte).
+      const diceSumForUtility = tile.type === "utility" ? this.rollDice().reduce((a, b) => a + b, 0) : 0;
+      this.resolveTile(player, tile, diceSumForUtility);
+      return false;
     }
 
     // Répond à une décision d'achat en attente. playerId doit correspondre
@@ -740,12 +815,19 @@
       const player = this.players[playerId];
 
       if (buy) {
-        const price = this.pendingDecision.price;
+        let price = this.pendingDecision.price;
+        const discounted = this.activeEvent && this.activeEvent.id === "price_reduction";
+        let powerDiscountApplied = false;
+        if (player.power && player.power.id === "discount_purchase" && !player.power.used) {
+          player.power.used = true;
+          price = Math.floor((price * (100 - DISCOUNT_PURCHASE_PERCENT)) / 100);
+          powerDiscountApplied = true;
+        }
         this.pay(player, null, price);
         tile.owner = player.id;
         player.stats.propertiesBought += 1;
-        const discounted = this.activeEvent && this.activeEvent.id === "price_reduction";
-        this.addLog(`${player.name} achète ${tile.name} pour ${price}${discounted ? " (prix réduit !)" : ""}.`);
+        const note = powerDiscountApplied ? " (🏷️ remise Négociateur !)" : discounted ? " (prix réduit !)" : "";
+        this.addLog(`${player.name} achète ${tile.name} pour ${price}${note}.`);
 
         const wasDouble = this._pendingDiceWasDouble;
         this.pendingDecision = null;
@@ -1164,12 +1246,13 @@
       }
       const plan = INSURANCE_PLANS.find((p) => p.id === Number(planId));
       if (!plan) return { ok: false, reason: "Formule d'assurance invalide." };
-      if (player.money < plan.premium) return { ok: false, reason: "Pas assez d'argent pour souscrire cette formule." };
+      const premium = this.insurancePrices[plan.id];
+      if (player.money < premium) return { ok: false, reason: "Pas assez d'argent pour souscrire cette formule." };
 
-      this.pay(player, null, plan.premium);
+      this.pay(player, null, premium);
       player.insurance = { planId: plan.id, planName: plan.name, turnsRemaining: plan.duration, coveragePercent: plan.coveragePercent };
       this.addLog(
-        `🛡️ ${player.name} souscrit l'assurance ${plan.name} pour ${plan.premium} (${plan.coveragePercent}% des loyers pris en charge pendant ${plan.duration} tours).`
+        `🛡️ ${player.name} souscrit l'assurance ${plan.name} pour ${premium} (${plan.coveragePercent}% des loyers pris en charge pendant ${plan.duration} tours).`
       );
       return { ok: true };
     }
@@ -1189,6 +1272,7 @@
         activeEvent: this.activeEvent ? { ...this.activeEvent } : null,
         loansEnabled: this.loansEnabled,
         insuranceEnabled: this.insuranceEnabled,
+        insurancePrices: this.insurancePrices,
         forcedAuctionsPerGame: this.forcedAuctionsPerGame,
         rentMultipliersByHouses: RENT_MULTIPLIERS_BY_HOUSES,
         airportRentTable: [25, 50, 100, 200],

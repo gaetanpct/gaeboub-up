@@ -90,7 +90,9 @@
   // Index 5 = hôtel.
   const RENT_MULTIPLIERS_BY_HOUSES = [1, 5, 15, 30, 40, 50];
 
-  // Petit paquet de cartes "Destin" — tiré au hasard avec remise.
+  // Paquet de cartes "Destin" — tiré au hasard avec remise. Un mélange de
+  // gains/pertes d'argent, d'effets de groupe (tout le monde paie/reçoit),
+  // et de déplacements — comme un vrai jeu de plateau économique.
   const CHANCE_CARDS = [
     {
       description: "Vous gagnez un prix de mots croisés (+100).",
@@ -123,6 +125,92 @@
     {
       description: "Vous héritez d'une petite somme (+100).",
       effect: (engine, player) => engine.pay(null, player, 100),
+    },
+    {
+      description: "C'est votre anniversaire : chaque joueur vous offre 20.",
+      effect: (engine, player) => {
+        engine.activePlayers().forEach((other) => {
+          if (other.id === player.id) return;
+          engine.pay(other, player, 20);
+        });
+      },
+    },
+    {
+      description: "Vous organisez une fête : versez 15 à chaque joueur.",
+      effect: (engine, player) => {
+        engine.activePlayers().forEach((other) => {
+          if (other.id === player.id) return;
+          engine.pay(player, other, 15);
+        });
+      },
+    },
+    {
+      description: "Réparations générales : payez 25 par maison et 100 par hôtel que vous possédez.",
+      effect: (engine, player) => {
+        const cost = engine.board
+          .filter((t) => t.owner === player.id && t.type === "property" && t.houses > 0)
+          .reduce((sum, t) => sum + (t.houses === 5 ? 100 : t.houses * 25), 0);
+        if (cost > 0) engine.pay(player, null, cost);
+      },
+    },
+    {
+      description: "Un distributeur vous rend trop de monnaie par erreur (+120).",
+      effect: (engine, player) => engine.pay(null, player, 120),
+    },
+    {
+      description: "Amende pour excès de vitesse (-40).",
+      effect: (engine, player) => engine.pay(player, null, 40),
+    },
+    {
+      description: "Vous retrouvez un billet oublié dans une veste (+30).",
+      effect: (engine, player) => engine.pay(null, player, 30),
+    },
+    {
+      description: "Frais de notaire imprévus (-60).",
+      effect: (engine, player) => engine.pay(player, null, 60),
+    },
+    {
+      description: "Bonus de fidélité de la banque (+80).",
+      effect: (engine, player) => engine.pay(null, player, 80),
+    },
+    {
+      description: "Contrôle fiscal (-90).",
+      effect: (engine, player) => engine.pay(player, null, 90),
+    },
+    {
+      description: "Avancez de 3 cases.",
+      effect: (engine, player) => {
+        const newIndex = (player.position + 3) % engine.board.length;
+        engine._landOnTile(player, newIndex);
+      },
+    },
+    {
+      description: "Reculez de 2 cases.",
+      effect: (engine, player) => {
+        const newIndex = (player.position - 2 + engine.board.length) % engine.board.length;
+        engine._landOnTile(player, newIndex);
+      },
+    },
+    {
+      description: "Grève générale des transports : reculez de 5 cases.",
+      effect: (engine, player) => {
+        const newIndex = (player.position - 5 + engine.board.length) % engine.board.length;
+        engine._landOnTile(player, newIndex);
+      },
+    },
+    {
+      description: "Foncez vers l'aéroport le plus proche.",
+      effect: (engine, player) => {
+        const newIndex = engine._findNearestTileOfType(player.position, "airport");
+        engine._landOnTile(player, newIndex);
+      },
+    },
+    {
+      description: "Direction la compagnie la plus proche.",
+      effect: (engine, player) => {
+        const newIndex = engine._findNearestTileOfType(player.position, "utility");
+        engine._landOnTile(player, newIndex);
+      },
     },
   ];
 

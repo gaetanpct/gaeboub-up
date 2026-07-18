@@ -157,16 +157,29 @@
       numGroups = Math.max(1, propertyBudget);
     }
 
-    // 2) Distribue le budget de propriétés entre les groupes (taille 1 à 4
-    //    chacun). On commence à 1 partout, puis on distribue le reste au
-    //    hasard, sans dépasser 4 par groupe. Le surplus éventuel (si tous
-    //    les groupes sont déjà à 4) part en cartes Destin supplémentaires.
+    // 2) Distribue le budget de propriétés entre les groupes (taille 1 à
+    //    "maxGroupSize" chacun). On commence à 1 partout, puis on
+    //    distribue le reste au hasard. Le surplus éventuel (si tous les
+    //    groupes sont déjà au maximum) part en cartes Destin supplémentaires.
+    //
+    // IMPORTANT : le maximum n'est PAS toujours 4. On le limite aussi selon
+    // la capacité réelle d'un côté du plateau (last - 1) et le nombre de
+    // groupes à y loger, pour GARANTIR qu'un empilement sans coupure de
+    // groupe reste mathématiquement possible (sinon, avec par exemple 5
+    // groupes forcés à la taille 4 sur des côtés de capacité 7, deux
+    // groupes ne peuvent physiquement pas partager un même côté : un
+    // groupe se retrouverait inévitablement coupé en deux).
+    const last = totalTiles / 4;
+    const sideCapacityForSizing = last - 1;
+    const groupsPerSideEstimate = Math.ceil(numGroups / 4);
+    const maxGroupSize = Math.max(1, Math.min(4, Math.floor(sideCapacityForSizing / groupsPerSideEstimate)));
+
     const groupSizes = new Array(numGroups).fill(1);
     let remaining = propertyBudget - numGroups;
     let safety = 0;
-    while (remaining > 0 && safety < 10000 && !groupSizes.every((s) => s >= 4)) {
+    while (remaining > 0 && safety < 10000 && !groupSizes.every((s) => s >= maxGroupSize)) {
       const g = randomInt(numGroups);
-      if (groupSizes[g] < 4) {
+      if (groupSizes[g] < maxGroupSize) {
         groupSizes[g] += 1;
         remaining -= 1;
       }
@@ -226,42 +239,80 @@
     //    On répartit maintenant chaque bloc-groupe dans le côté qui a le
     //    plus de place restante (« best fit »), puis on comble le reste de
     //    chaque côté avec les cases isolées (Destin, taxes, gares...).
-    const last = totalTiles / 4;
+    //
+    // IMPORTANT (comme dans le vrai Monopoly) : les groupes sont générés
+    // du moins cher au plus cher (GROUP_TIERS est déjà dans cet ordre), et
+    // on les place SÉQUENTIELLEMENT côté par côté SANS les mélanger — le
+    // groupe le moins cher se retrouve donc toujours près du Départ, et le
+    // plus cher près de la fin du plateau, exactement comme sur un vrai
+    // plateau. Seules les cases isolées (Destin, taxes...) sont mélangées,
+    // pour ne pas rendre le plateau prévisible case par case.
     const sideCapacity = last - 1;
-    const sides = [[], [], [], []];
+    const sideChunks = [[], [], [], []];
     const sideRemaining = [sideCapacity, sideCapacity, sideCapacity, sideCapacity];
 
-    const groupBlocks = shuffle(blocks.filter((b) => b.length > 1));
-    const singleBlocks = shuffle(blocks.filter((b) => b.length === 1));
+    const groupBlocks = blocks.filter((b) => b[0].type === "property"); // déjà du moins cher au plus cher, on NE les mélange PAS
+    const singleBlocks = shuffle(blocks.filter((b) => b[0].type !== "property"));
 
+    let currentSide = 0;
+    let safetyCounter = 0;
     groupBlocks.forEach((block) => {
-      let bestSide = -1;
-      let bestRemaining = -1;
-      for (let s = 0; s < 4; s++) {
-        if (sideRemaining[s] >= block.length && sideRemaining[s] > bestRemaining) {
-          bestSide = s;
-          bestRemaining = sideRemaining[s];
+      let remaining = block;
+      while (remaining.length > 0 && safetyCounter < 10000) {
+        safetyCounter++;
+        while (currentSide < 4 && sideRemaining[currentSide] < remaining.length) currentSide++;
+        if (currentSide < 4) {
+          sideChunks[currentSide].push(remaining);
+          sideRemaining[currentSide] -= remaining.length;
+          remaining = [];
+        } else {
+          // Empilement impossible tel quel dans l'ordre strict (peut
+          // arriver avec des tailles de groupe qui ne se répartissent pas
+          // parfaitement sur 4 côtés égaux) : on retente sur le côté qui a
+          // le PLUS de place restante (quitte à rompre l'ordre pour ce
+          // groupe précis), et si même celui-là ne suffit pas, on ne
+          // retire qu'UNE case à la fois plutôt que d'éclater tout le
+          // groupe — la grande majorité de ses cases reste donc groupée.
+          let bestSide = 0;
+          for (let s = 1; s < 4; s++) {
+            if (sideRemaining[s] > sideRemaining[bestSide]) bestSide = s;
+          }
+          currentSide = bestSide;
+          if (sideRemaining[bestSide] < remaining.length) {
+            const shaved = remaining.pop();
+            singleBlocks.push([shaved]);
+          }
         }
       }
-      if (bestSide === -1) {
-        // Filet de sécurité (ne devrait jamais arriver avec nos limites de
-        // taille de groupe/plateau) : on éclate le bloc en cases isolées
-        // plutôt que de perdre des cases ou de planter.
-        block.forEach((tile) => singleBlocks.push([tile]));
-        return;
-      }
-      sides[bestSide].push(...block);
-      sideRemaining[bestSide] -= block.length;
     });
 
-    // Comble chaque côté avec des cases isolées, mélangées.
+    // Comble chaque côté avec des cases isolées, dispersées dans les
+    // « espaces » entre les groupes (avant le premier, entre chaque paire,
+    // après le dernier) — jamais À L'INTÉRIEUR d'un groupe, et sans jamais
+    // changer l'ordre relatif de deux groupes qui partagent le même côté
+    // (sinon on recréerait le problème qu'on vient de corriger : un
+    // groupe moins cher qui se retrouve après un groupe plus cher).
     for (let s = 0; s < 4; s++) {
+      const groupChunksOfSide = sideChunks[s];
+      const numGaps = groupChunksOfSide.length + 1;
+      const gaps = Array.from({ length: numGaps }, () => []);
       while (sideRemaining[s] > 0) {
         const single = singleBlocks.pop();
-        sides[s].push(...single);
+        gaps[randomInt(numGaps)].push(...single);
         sideRemaining[s] -= 1;
       }
+      const withFillers = [];
+      groupChunksOfSide.forEach((chunk, i) => {
+        withFillers.push(...gaps[i]);
+        withFillers.push(chunk);
+      });
+      withFillers.push(...gaps[numGaps - 1]);
+      sideChunks[s] = withFillers;
     }
+
+    // Chaque côté est maintenant prêt : groupes dans l'ordre croissant de
+    // prix, cases isolées dispersées entre eux sans jamais les déplacer.
+    const sides = sideChunks.map((chunks) => chunks.flat());
 
     // 5) Place les coins fixes + chaque côté à son emplacement.
     const board = new Array(totalTiles);

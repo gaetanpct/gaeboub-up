@@ -114,6 +114,14 @@ function renderRuleControl(rule, value) {
       </label>
     `;
   }
+  if (rule.type === "number") {
+    return `
+      <label>
+        ${rule.label} ${renderInfoButton(rule)}
+        <input type="number" data-rule-id="${rule.id}" data-rule-type="number" value="${value}" min="${rule.min ?? ""}" max="${rule.max ?? ""}" />
+      </label>
+    `;
+  }
   // type === "select"
   const optionsHtml = rule.options
     .map((opt) => {
@@ -161,6 +169,10 @@ function emitSettingsChange() {
     const ruleId = el.dataset.ruleId;
     if (el.dataset.ruleType === "boolean") {
       payload[ruleId] = el.checked;
+      return;
+    }
+    if (el.dataset.ruleType === "number") {
+      payload[ruleId] = Number(el.value) || 0;
       return;
     }
     const ruleDef = findRuleDef(ruleId);
@@ -422,6 +434,8 @@ function renderActiveRulesPanel(state) {
         let text;
         if (rule.type === "boolean") {
           text = rule.label.replace(/^[^\w]*\s*/, ""); // retire l'emoji déjà présent dans le libellé
+        } else if (rule.type === "number") {
+          text = `${rule.label} : ${value}`;
         } else {
           const option = rule.options.find((o) => o.value === value);
           text = `${rule.label} : ${option ? option.label : value}`;
@@ -767,6 +781,12 @@ function renderPowerModal() {
         </div>
       `;
     }
+  } else if (power.id === "bank_loan") {
+    html += `
+      <div class="trade-form">
+        <button id="btn-use-power" class="btn-primary">Recevoir 150 de la banque</button>
+      </div>
+    `;
   }
 
   powerContent.innerHTML = html;
@@ -781,6 +801,10 @@ function renderPowerModal() {
     useBtn.addEventListener("click", () => {
       const targetId = Number(document.getElementById("power-steal-target").value);
       socket.emit("game:useSteal", { targetId });
+    });
+  } else if (useBtn && power.id === "bank_loan") {
+    useBtn.addEventListener("click", () => {
+      socket.emit("game:useBankLoan");
     });
   }
 }
@@ -973,14 +997,15 @@ function renderLoansModal() {
     if (me.insurance) {
       html += `<p class="properties-empty">Formule <strong>${me.insurance.planName}</strong> active : ${me.insurance.coveragePercent}% des loyers pris en charge, encore ${me.insurance.turnsRemaining} tour(s).</p>`;
     } else {
-      html += ReachUpInsurance.INSURANCE_PLANS.map(
-        (plan) => `
+      html += ReachUpInsurance.INSURANCE_PLANS.map((plan) => {
+        const price = latestGameState.insurancePrices ? latestGameState.insurancePrices[plan.id] : plan.premium;
+        return `
           <div class="property-row">
-            <div class="property-row__info"><strong>${plan.name}</strong> — coût ${plan.premium}, couvre ${plan.coveragePercent}% des loyers pendant ${plan.duration} tours</div>
+            <div class="property-row__info"><strong>${plan.name}</strong> — coût ${price}, couvre ${plan.coveragePercent}% des loyers pendant ${plan.duration} tours</div>
             <div class="property-row__actions"><button data-buy-insurance="${plan.id}" class="btn-primary">Souscrire</button></div>
           </div>
-        `
-      ).join("");
+        `;
+      }).join("");
     }
   }
 

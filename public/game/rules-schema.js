@@ -17,8 +17,8 @@
 // Types de règles supportés :
 //   - "boolean" : case à cocher (true/false)
 //   - "select"  : liste de choix (options: [{value, label}, ...])
-// D'autres types (nombre libre, curseur...) pourront être ajoutés ici
-// au besoin dans les prochaines sous-phases.
+//   - "number"  : nombre libre borné (min, max) — Phase 11
+// D'autres types (curseur...) pourront être ajoutés ici au besoin.
 // ============================================================
 
 (function (root, factory) {
@@ -187,7 +187,31 @@
           label: "🛡️ Assurance",
           type: "boolean",
           default: false,
-          info: "Un joueur peut souscrire l'une de 3 formules (coût et couverture différents) qui prend en charge une partie de ses loyers à payer pendant une durée limitée.",
+          info: "Un joueur peut souscrire l'une de 3 formules (coût et couverture différents) qui prend en charge une partie de ses loyers à payer pendant une durée limitée. Toi, l'hôte, choisis le prix de chaque formule ci-dessous.",
+        },
+        {
+          id: "insurancePlan1Price",
+          label: "Prix formule Basique (couvre 25% des loyers)",
+          type: "number",
+          default: 60,
+          min: 0,
+          max: 2000,
+        },
+        {
+          id: "insurancePlan2Price",
+          label: "Prix formule Standard (couvre 50% des loyers)",
+          type: "number",
+          default: 100,
+          min: 0,
+          max: 2000,
+        },
+        {
+          id: "insurancePlan3Price",
+          label: "Prix formule Premium (couvre 75% des loyers)",
+          type: "number",
+          default: 150,
+          min: 0,
+          max: 2000,
         },
       ],
     },
@@ -344,6 +368,15 @@
         if (rule.type === "select") {
           const allowed = rule.options.some((opt) => opt.value === value);
           if (allowed) validated[rule.id] = value;
+          return;
+        }
+
+        if (rule.type === "number") {
+          const num = Math.floor(Number(value));
+          if (Number.isNaN(num)) return;
+          const min = rule.min !== undefined ? rule.min : -Infinity;
+          const max = rule.max !== undefined ? rule.max : Infinity;
+          validated[rule.id] = Math.max(min, Math.min(max, num));
         }
       });
     });
