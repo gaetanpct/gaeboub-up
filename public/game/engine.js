@@ -19,33 +19,35 @@
     const { BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES } = require("./board.js");
     const { POWERS, STEAL_AMOUNT, randomPowerId } = require("./powers.js");
     const { WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent } = require("./world-events.js");
+    const { INSURANCE_PLANS } = require("./insurance-plans.js");
     module.exports = factory(
       BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
       POWERS, STEAL_AMOUNT, randomPowerId,
-      WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent
+      WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
+      INSURANCE_PLANS
     );
   } else {
     const b = root.ReachUpBoard;
     const p = root.ReachUpPowers;
     const w = root.ReachUpWorldEvents;
+    const ins = root.ReachUpInsurance;
     root.ReachUpEngine = factory(
       b.BOARD, b.CHANCE_CARDS, b.HOUSE_COST_BY_GROUP, b.RENT_MULTIPLIERS_BY_HOUSES,
       p.POWERS, p.STEAL_AMOUNT, p.randomPowerId,
-      w.WORLD_EVENTS, w.EVENT_DURATION_TURNS, w.FREQUENCY_PROBABILITY, w.randomEvent
+      w.WORLD_EVENTS, w.EVENT_DURATION_TURNS, w.FREQUENCY_PROBABILITY, w.randomEvent,
+      ins.INSURANCE_PLANS
     );
   }
 })(typeof window !== "undefined" ? window : globalThis, function (
   BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
   POWERS, STEAL_AMOUNT, randomPowerId,
-  WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent
+  WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
+  INSURANCE_PLANS
 ) {
   const STARTING_MONEY = 1500;
   const SALARY = 200;
   const JAIL_FINE = 50;
   const MAX_JAIL_TURNS = 3;
-  const INSURANCE_PREMIUM = 100;
-  const INSURANCE_COVERAGE_PERCENT = 50;
-  const INSURANCE_DURATION_TURNS = 8;
 
   class GameEngine {
     /**
@@ -79,6 +81,7 @@
       this.diceSides = options.diceSides || 6;
       this.auctionMode = options.auctionMode === "classic" ? "classic" : "secret";
       this.tradeTaxPercent = options.tradeTaxPercent || 0;
+      this.forcedAuctionsPerGame = options.forcedAuctionsPerGame || 0;
       this.worldEventsEnabled = !!options.worldEventsEnabled;
       this.worldEventFrequency = options.worldEventFrequency || "normal";
       this.activeEvent = null; // { id, turnsRemaining }
@@ -101,7 +104,20 @@
         jailFreeCards: 0,
         bankrupt: false,
         power: this.powersEnabled ? { id: randomPowerId(), used: false } : null,
-        insurance: null, // { turnsRemaining, coveragePercent }
+        insurance: null, // { planId, planName, turnsRemaining, coveragePercent }
+        forcedAuctionsUsed: 0,
+        stats: {
+          rentPaid: 0,
+          rentReceived: 0,
+          taxesPaid: 0,
+          timesInJail: 0,
+          propertiesBought: 0,
+          auctionsWon: 0,
+          housesBuilt: 0,
+          tradesCompleted: 0,
+          biggestRentPaid: 0,
+          salaryCollected: 0,
+        },
       }));
 
       this.decideBuy =
@@ -173,6 +189,7 @@
         const doubled = this.activeEvent && this.activeEvent.id === "double_salary";
         const salaryAmount = doubled ? this.salary * 2 : this.salary;
         this.pay(null, player, salaryAmount);
+        player.stats.salaryCollected += salaryAmount;
         this.addLog(`${player.name} passe par la case Départ et touche ${salaryAmount}${doubled ? " (salaire doublé !)" : ""}.`);
       }
     }
@@ -183,6 +200,7 @@
       player.position = this.board.length / 4;
       player.inJail = true;
       player.jailTurns = 0;
+      player.stats.timesInJail += 1;
       this.addLog(`${player.name} est envoyé en prison.`);
     }
 
@@ -286,6 +304,7 @@
       const player = this.players[playerId];
       this.pay(player, null, check.cost);
       tile.houses += 1;
+      player.stats.housesBuilt += 1;
       const label = tile.houses === 5 ? "un hôtel" : `${tile.houses} maison(s)`;
       this.addLog(`${player.name} construit sur ${tile.name} (${label}) pour ${check.cost}.`);
       return { ok: true };
@@ -394,6 +413,9 @@
             const owner = this.players[tile.owner];
             rent = this._applyDoubleRentPower(owner, rent);
             this._payRentWithInsurance(player, owner, rent);
+            player.stats.rentPaid += rent;
+            owner.stats.rentReceived += rent;
+            player.stats.biggestRentPaid = Math.max(player.stats.biggestRentPaid, rent);
             const buildingNote = tile.houses === 5 ? " (hôtel)" : tile.houses > 0 ? ` (${tile.houses} maison(s))` : "";
             this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}${buildingNote}).`);
           }
@@ -411,6 +433,9 @@
             let rent = rentTable[Math.max(count - 1, 0)];
             rent = this._applyDoubleRentPower(owner, rent);
             this._payRentWithInsurance(player, owner, rent);
+            player.stats.rentPaid += rent;
+            owner.stats.rentReceived += rent;
+            player.stats.biggestRentPaid = Math.max(player.stats.biggestRentPaid, rent);
             this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}).`);
           }
           break;
@@ -427,6 +452,9 @@
             let rent = diceSum * multiplier;
             rent = this._applyDoubleRentPower(owner, rent);
             this._payRentWithInsurance(player, owner, rent);
+            player.stats.rentPaid += rent;
+            owner.stats.rentReceived += rent;
+            player.stats.biggestRentPaid = Math.max(player.stats.biggestRentPaid, rent);
             this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}, ${count === 1 ? "x4" : "x10"} le lancer de dés).`);
           }
           break;
@@ -438,6 +466,7 @@
             break;
           }
           this.pay(player, null, tile.amount);
+          player.stats.taxesPaid += tile.amount;
           if (this.vacationPotEnabled) {
             this.vacationPot += tile.amount;
             this.addLog(`${player.name} paie ${tile.amount} de taxe (${tile.name}) — cagnotte de Vacances : ${this.vacationPot}.`);
@@ -714,6 +743,7 @@
         const price = this.pendingDecision.price;
         this.pay(player, null, price);
         tile.owner = player.id;
+        player.stats.propertiesBought += 1;
         const discounted = this.activeEvent && this.activeEvent.id === "price_reduction";
         this.addLog(`${player.name} achète ${tile.name} pour ${price}${discounted ? " (prix réduit !)" : ""}.`);
 
@@ -731,11 +761,12 @@
     }
 
     // ---- Enchères — Phase 7 (secrète) + Phase 8a (classique) ----
-    startAuction(tileIndex) {
+    startAuction(tileIndex, options = {}) {
+      const triggeredByRoll = options.triggeredByRoll !== false;
       const tile = this.board[tileIndex];
       const bidders = this.activePlayers().map((p) => p.id);
       if (bidders.length === 0) {
-        this._afterRollResolved(this._pendingDiceWasDouble);
+        if (triggeredByRoll) this._afterRollResolved(this._pendingDiceWasDouble);
         return;
       }
 
@@ -747,12 +778,40 @@
           currentBidderId: null,
           activeBidders: bidders,
           turnIndex: 0,
+          triggeredByRoll,
         };
         this.addLog(`🔨 Enchère classique sur ${tile.name} ! Chacun mise à son tour ou passe.`);
       } else {
-        this.pendingAuction = { mode: "secret", tileIndex, bids: {}, pendingPlayers: bidders };
+        this.pendingAuction = { mode: "secret", tileIndex, bids: {}, pendingPlayers: bidders, triggeredByRoll };
         this.addLog(`🔨 Enchère scellée sur ${tile.name} ! Chaque joueur mise en secret (0 pour passer).`);
       }
+    }
+
+    // Une enchère "forcée" : n'importe quel joueur peut, à tout moment (pas
+    // seulement à son tour), déclencher une enchère sur une case libre de
+    // son choix — un nombre limité de fois par partie (Phase 10).
+    startForcedAuction(playerId, tileIndex) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this.forcedAuctionsPerGame || this.forcedAuctionsPerGame <= 0) {
+        return { ok: false, reason: "Cette règle n'est pas activée pour cette partie." };
+      }
+      if (player.forcedAuctionsUsed >= this.forcedAuctionsPerGame) {
+        return { ok: false, reason: "Tu as déjà utilisé toutes tes enchères forcées." };
+      }
+      if (this.pendingAuction || this.pendingDecision) {
+        return { ok: false, reason: "Une autre enchère ou décision est déjà en cours." };
+      }
+      const tile = this.board[tileIndex];
+      const ownableTypes = ["property", "airport", "utility"];
+      if (!tile || !ownableTypes.includes(tile.type) || tile.owner !== null) {
+        return { ok: false, reason: "Cette case n'est pas disponible pour une enchère forcée (déjà possédée ou non achetable)." };
+      }
+
+      player.forcedAuctionsUsed += 1;
+      this.addLog(`🔨 ${player.name} déclenche une enchère forcée sur ${tile.name} (${player.forcedAuctionsUsed}/${this.forcedAuctionsPerGame}) !`);
+      this.startAuction(tileIndex, { triggeredByRoll: false });
+      return { ok: true };
     }
 
     // -- Enchère scellée (secret) --
@@ -849,20 +908,24 @@
     // la propriété au gagnant s'il y en a un, sinon elle reste libre.
     _concludeAuction(winnerId, winningBid) {
       const tile = this.board[this.pendingAuction.tileIndex];
+      const triggeredByRoll = this.pendingAuction.triggeredByRoll;
 
       if (winnerId !== null && winningBid > 0) {
         const winner = this.players[winnerId];
         this.pay(winner, null, winningBid);
         tile.owner = winner.id;
+        winner.stats.auctionsWon += 1;
         this.addLog(`🔨 ${winner.name} remporte l'enchère sur ${tile.name} pour ${winningBid} !`);
       } else {
         this.addLog(`Personne n'a remporté l'enchère : ${tile.name} reste libre.`);
       }
 
       this.pendingAuction = null;
-      const wasDouble = this._pendingDiceWasDouble;
-      this._pendingDiceWasDouble = false;
-      this._afterRollResolved(wasDouble);
+      if (triggeredByRoll) {
+        const wasDouble = this._pendingDiceWasDouble;
+        this._pendingDiceWasDouble = false;
+        this._afterRollResolved(wasDouble);
+      }
     }
 
     // ---- Échanges entre joueurs — Phase 7 ----
@@ -949,6 +1012,8 @@
 
       this.tradeOffers.splice(idx, 1);
       const taxNote = this.tradeTaxPercent > 0 ? ` (taxe de ${this.tradeTaxPercent}% prélevée)` : "";
+      from.stats.tradesCompleted += 1;
+      to.stats.tradesCompleted += 1;
       this.addLog(`🤝 Échange conclu entre ${from.name} et ${to.name}${taxNote} !`);
       return { ok: true };
     }
@@ -1089,20 +1154,22 @@
       }
     }
 
-    // ---- Assurance — Phase 8e ----
-    buyInsurance(playerId) {
+    // ---- Assurance — Phase 8e (+ 3 formules au choix, Phase 10) ----
+    buyInsurance(playerId, planId) {
       if (!this.insuranceEnabled) return { ok: false, reason: "L'assurance n'est pas activée pour cette partie." };
       const player = this.players[playerId];
       if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
       if (player.insurance && player.insurance.turnsRemaining > 0) {
         return { ok: false, reason: "Tu as déjà une assurance active." };
       }
-      if (player.money < INSURANCE_PREMIUM) return { ok: false, reason: "Pas assez d'argent pour souscrire une assurance." };
+      const plan = INSURANCE_PLANS.find((p) => p.id === Number(planId));
+      if (!plan) return { ok: false, reason: "Formule d'assurance invalide." };
+      if (player.money < plan.premium) return { ok: false, reason: "Pas assez d'argent pour souscrire cette formule." };
 
-      this.pay(player, null, INSURANCE_PREMIUM);
-      player.insurance = { turnsRemaining: INSURANCE_DURATION_TURNS, coveragePercent: INSURANCE_COVERAGE_PERCENT };
+      this.pay(player, null, plan.premium);
+      player.insurance = { planId: plan.id, planName: plan.name, turnsRemaining: plan.duration, coveragePercent: plan.coveragePercent };
       this.addLog(
-        `🛡️ ${player.name} souscrit une assurance pour ${INSURANCE_PREMIUM} (${INSURANCE_COVERAGE_PERCENT}% des loyers pris en charge pendant ${INSURANCE_DURATION_TURNS} tours).`
+        `🛡️ ${player.name} souscrit l'assurance ${plan.name} pour ${plan.premium} (${plan.coveragePercent}% des loyers pris en charge pendant ${plan.duration} tours).`
       );
       return { ok: true };
     }
@@ -1122,6 +1189,10 @@
         activeEvent: this.activeEvent ? { ...this.activeEvent } : null,
         loansEnabled: this.loansEnabled,
         insuranceEnabled: this.insuranceEnabled,
+        forcedAuctionsPerGame: this.forcedAuctionsPerGame,
+        rentMultipliersByHouses: RENT_MULTIPLIERS_BY_HOUSES,
+        airportRentTable: [25, 50, 100, 200],
+        chanceCardDescriptions: CHANCE_CARDS.map((c) => c.description),
         // Enchère secrète : on ne révèle jamais les montants avant la fin.
         // Enchère classique : tout est public (comme à la criée en vrai).
         pendingAuction: this.pendingAuction
@@ -1154,10 +1225,13 @@
           bankrupt: p.bankrupt,
           power: p.power ? { ...p.power } : null,
           insurance: p.insurance ? { ...p.insurance } : null,
+          forcedAuctionsUsed: p.forcedAuctionsUsed,
+          stats: { ...p.stats },
         })),
         board: this.board.map((t) => ({
           type: t.type,
           name: t.name,
+          short: t.short,
           group: t.group || null,
           price: t.price || null,
           rent: t.rent || null,
@@ -1213,5 +1287,5 @@
     }
   }
 
-  return { GameEngine };
+  return { GameEngine, INSURANCE_PLANS };
 });

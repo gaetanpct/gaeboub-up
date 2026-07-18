@@ -219,23 +219,62 @@
       blocks.push([{ type: "utility", name, short: i < 2 ? (i === 0 ? "Eaux" : "Électricité") : `Cie ${i + 1}`, price: 150, owner: null, mortgaged: false }]);
     }
 
-    // 4) Mélange l'ORDRE des blocs (chaque groupe reste contigu en interne).
-    const shuffledBlocks = shuffle(blocks);
-    const sequence = shuffledBlocks.flat();
-
-    // 5) Place les coins fixes + la séquence tout autour.
+    // 4) RÉPARTITION PAR CÔTÉ (correction importante) : on ne mélange plus
+    //    tous les blocs à plat avant de couper en 4 — un groupe de
+    //    plusieurs propriétés pourrait alors se retrouver coupé en deux,
+    //    une partie sur un côté du plateau et l'autre sur le côté suivant.
+    //    On répartit maintenant chaque bloc-groupe dans le côté qui a le
+    //    plus de place restante (« best fit »), puis on comble le reste de
+    //    chaque côté avec les cases isolées (Destin, taxes, gares...).
     const last = totalTiles / 4;
+    const sideCapacity = last - 1;
+    const sides = [[], [], [], []];
+    const sideRemaining = [sideCapacity, sideCapacity, sideCapacity, sideCapacity];
+
+    const groupBlocks = shuffle(blocks.filter((b) => b.length > 1));
+    const singleBlocks = shuffle(blocks.filter((b) => b.length === 1));
+
+    groupBlocks.forEach((block) => {
+      let bestSide = -1;
+      let bestRemaining = -1;
+      for (let s = 0; s < 4; s++) {
+        if (sideRemaining[s] >= block.length && sideRemaining[s] > bestRemaining) {
+          bestSide = s;
+          bestRemaining = sideRemaining[s];
+        }
+      }
+      if (bestSide === -1) {
+        // Filet de sécurité (ne devrait jamais arriver avec nos limites de
+        // taille de groupe/plateau) : on éclate le bloc en cases isolées
+        // plutôt que de perdre des cases ou de planter.
+        block.forEach((tile) => singleBlocks.push([tile]));
+        return;
+      }
+      sides[bestSide].push(...block);
+      sideRemaining[bestSide] -= block.length;
+    });
+
+    // Comble chaque côté avec des cases isolées, mélangées.
+    for (let s = 0; s < 4; s++) {
+      while (sideRemaining[s] > 0) {
+        const single = singleBlocks.pop();
+        sides[s].push(...single);
+        sideRemaining[s] -= 1;
+      }
+    }
+
+    // 5) Place les coins fixes + chaque côté à son emplacement.
     const board = new Array(totalTiles);
     board[0] = { type: "go", name: "Départ", short: "DÉPART" };
     board[last] = { type: "jail", name: "Prison / Simple visite", short: "Prison" };
     board[2 * last] = { type: "vacation", name: "Vacances", short: "Vacances" };
     board[3 * last] = { type: "go-to-jail", name: "Aller en prison", short: "→ Prison" };
 
-    let cursor = 0;
-    for (let i = 1; i < last; i++) board[i] = sequence[cursor++];
-    for (let i = last + 1; i < 2 * last; i++) board[i] = sequence[cursor++];
-    for (let i = 2 * last + 1; i < 3 * last; i++) board[i] = sequence[cursor++];
-    for (let i = 3 * last + 1; i < totalTiles; i++) board[i] = sequence[cursor++];
+    let i;
+    for (i = 1; i < last; i++) board[i] = sides[0][i - 1];
+    for (i = last + 1; i < 2 * last; i++) board[i] = sides[1][i - last - 1];
+    for (i = 2 * last + 1; i < 3 * last; i++) board[i] = sides[2][i - 2 * last - 1];
+    for (i = 3 * last + 1; i < totalTiles; i++) board[i] = sides[3][i - 3 * last - 1];
 
     return board;
   }

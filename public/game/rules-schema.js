@@ -187,7 +187,7 @@
           label: "🛡️ Assurance",
           type: "boolean",
           default: false,
-          info: "Un joueur peut souscrire une assurance (coût fixe) qui prend en charge une partie de ses loyers à payer pendant une durée limitée.",
+          info: "Un joueur peut souscrire l'une de 3 formules (coût et couverture différents) qui prend en charge une partie de ses loyers à payer pendant une durée limitée.",
         },
       ],
     },
@@ -203,6 +203,10 @@
             { value: 1000, label: "1000" },
             { value: 1500, label: "1500" },
             { value: 2000, label: "2000" },
+            { value: 2500, label: "2500" },
+            { value: 3000, label: "3000" },
+            { value: 3500, label: "3500" },
+            { value: 4000, label: "4000" },
           ],
         },
         {
@@ -267,6 +271,18 @@
           options: [
             { value: "secret", label: "Enchère secrète (mise cachée, révélée à la fin)" },
             { value: "classic", label: "Enchère classique (à tour de rôle, à la criée)" },
+          ],
+        },
+        {
+          id: "forcedAuctionsPerGame",
+          label: "🔨 Enchères forcées par joueur (déclencher une enchère sur la propriété de son choix, à tout moment)",
+          type: "select",
+          default: 0,
+          options: [
+            { value: 0, label: "0 (désactivé)" },
+            { value: 1, label: "1 fois" },
+            { value: 2, label: "2 fois" },
+            { value: 3, label: "3 fois" },
           ],
         },
       ],

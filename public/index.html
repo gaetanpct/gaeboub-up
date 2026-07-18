@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reach Up</title>
+  <title>Gaeboub-up</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
   <!-- Accueil et salon d'attente : présentation classique, centrée -->
   <main class="app">
-    <h1>Reach Up</h1>
+    <h1>Gaeboub-up</h1>
 
     <!-- Écran d'accueil : choisir un pseudo, créer ou rejoindre un salon -->
     <section id="screen-home" class="screen">
@@ -90,6 +90,7 @@
           <button id="btn-open-trade" class="btn-icon" title="Échanges">🤝</button>
           <button id="btn-open-power" class="btn-icon" title="Mon pouvoir" hidden>🔮</button>
           <button id="btn-open-loans" class="btn-icon" title="Prêts &amp; Assurance" hidden>💳</button>
+          <button id="btn-open-reference" class="btn-icon" title="Cartes &amp; Événements possibles">📋</button>
         </div>
 
         <div class="log-wrap log-wrap--compact">
@@ -146,6 +147,39 @@
         <div id="loans-content" class="properties-list"></div>
       </div>
     </div>
+
+    <!-- Fenêtre de détail d'une case (clic sur le plateau) -->
+    <div id="tile-detail-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2 id="tile-detail-title">Détail</h2>
+          <button id="btn-close-tile-detail" class="btn-close">✕</button>
+        </div>
+        <div id="tile-detail-content" class="properties-list"></div>
+      </div>
+    </div>
+
+    <!-- Fenêtre de référence : cartes et événements possibles -->
+    <div id="reference-modal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2>Cartes &amp; Événements possibles</h2>
+          <button id="btn-close-reference" class="btn-close">✕</button>
+        </div>
+        <div id="reference-content" class="properties-list"></div>
+      </div>
+    </div>
+
+    <!-- Fenêtre de statistiques de fin de partie -->
+    <div id="stats-modal" class="modal-overlay" hidden>
+      <div class="modal-box modal-box--wide">
+        <div class="modal-header">
+          <h2>📊 Statistiques de la partie</h2>
+          <button id="btn-close-stats" class="btn-close">✕</button>
+        </div>
+        <div id="stats-content" class="properties-list"></div>
+      </div>
+    </div>
   </section>
 
   <script src="/socket.io/socket.io.js"></script>
@@ -153,6 +187,7 @@
   <script src="game/rules-schema.js"></script>
   <script src="game/powers.js"></script>
   <script src="game/world-events.js"></script>
+  <script src="game/insurance-plans.js"></script>
   <script src="board-view.js"></script>
   <script src="game.js"></script>
 </body>

@@ -250,6 +250,37 @@ const btnOpenLoans = document.getElementById("btn-open-loans");
 const btnCloseLoans = document.getElementById("btn-close-loans");
 let loanTargetId = null;
 
+const tileDetailModal = document.getElementById("tile-detail-modal");
+const btnCloseTileDetail = document.getElementById("btn-close-tile-detail");
+btnCloseTileDetail.addEventListener("click", () => { tileDetailModal.hidden = true; });
+tileDetailModal.addEventListener("click", (event) => {
+  if (event.target === tileDetailModal) tileDetailModal.hidden = true;
+});
+ReachUpBoardView.onTileClick((tileIndex) => {
+  renderTileDetailModal(tileIndex);
+  tileDetailModal.hidden = false;
+});
+
+const referenceModal = document.getElementById("reference-modal");
+const btnOpenReference = document.getElementById("btn-open-reference");
+const btnCloseReference = document.getElementById("btn-close-reference");
+btnOpenReference.addEventListener("click", () => {
+  referenceModal.hidden = false;
+  renderReferenceModal();
+});
+btnCloseReference.addEventListener("click", () => { referenceModal.hidden = true; });
+referenceModal.addEventListener("click", (event) => {
+  if (event.target === referenceModal) referenceModal.hidden = true;
+});
+
+const statsModal = document.getElementById("stats-modal");
+const btnCloseStats = document.getElementById("btn-close-stats");
+btnCloseStats.addEventListener("click", () => { statsModal.hidden = true; });
+statsModal.addEventListener("click", (event) => {
+  if (event.target === statsModal) statsModal.hidden = true;
+});
+let statsAutoShown = false;
+
 let latestGameState = null;
 
 btnOpenProperties.addEventListener("click", () => {
@@ -343,10 +374,17 @@ function renderGame(state) {
   if (!tradeModal.hidden) renderTradeModal();
   if (!powerModal.hidden) renderPowerModal();
   if (!loansModal.hidden) renderLoansModal();
+  if (!statsModal.hidden) renderStatsModal();
 
   const me = state.players.find((p) => p.id === myPlayerId);
   btnOpenPower.hidden = !me || !me.power;
   btnOpenLoans.hidden = !(state.loansEnabled || state.insuranceEnabled);
+
+  if (state.gameOver && !statsAutoShown) {
+    statsAutoShown = true;
+    renderStatsModal();
+    statsModal.hidden = false;
+  }
 }
 
 function renderActiveEventBanner(state) {
@@ -423,7 +461,7 @@ function renderPlayers(state) {
     card.innerHTML = `
       <h3>${player.name}${player.id === myPlayerId ? " (toi)" : ""}</h3>
       <p>💰 ${player.money}</p>
-      <p>📍 ${tile.name}</p>
+      <p>📍 ${ReachUpBoardView.tileSwatch(tile)} ${tile.name}</p>
       <p>🏷️ ${propertiesCount} propriété(s)</p>
       ${player.power ? `<p class="power-badge">${ReachUpPowers.findPower(player.power.id).icon} ${ReachUpPowers.findPower(player.power.id).name}${player.power.used ? " (utilisé)" : ""}</p>` : ""}
       <p class="player-status">${statusLabel}</p>
@@ -441,7 +479,17 @@ function renderPlayers(state) {
 
 function renderActionArea(state) {
   actionArea.innerHTML = "";
-  if (state.gameOver) return;
+  if (state.gameOver) {
+    const box = document.createElement("div");
+    box.className = "action-box";
+    box.innerHTML = `<button id="btn-reopen-stats" class="btn-primary">📊 Voir les statistiques</button>`;
+    actionArea.appendChild(box);
+    document.getElementById("btn-reopen-stats").addEventListener("click", () => {
+      renderStatsModal();
+      statsModal.hidden = false;
+    });
+    return;
+  }
 
   // Cas 0 : une enchère est en cours (secrète ou classique)
   if (state.pendingAuction) {
@@ -455,7 +503,7 @@ function renderActionArea(state) {
       if (auction.currentTurnPlayerId === myPlayerId) {
         const minBid = auction.currentBid + 1;
         box.innerHTML = `
-          <p>🔨 Enchère classique sur <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
+          <p>🔨 Enchère classique sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
           <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
           <input type="number" id="auction-raise-input" min="${minBid}" value="${minBid}" class="auction-input" />
           <button id="btn-raise-bid" class="btn-primary">Enchérir</button>
@@ -472,7 +520,7 @@ function renderActionArea(state) {
       } else {
         const turnName = state.players[auction.currentTurnPlayerId].name;
         box.innerHTML = `
-          <p>🔨 Enchère classique sur <strong>${tile.name}</strong></p>
+          <p>🔨 Enchère classique sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong></p>
           <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
           <p class="action-box--waiting">Au tour de ${turnName}...</p>
         `;
@@ -486,7 +534,7 @@ function renderActionArea(state) {
       const box = document.createElement("div");
       box.className = "action-box";
       box.innerHTML = `
-        <p>🔨 Enchère scellée sur <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
+        <p>🔨 Enchère scellée sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
         <input type="number" id="auction-bid-input" min="0" value="0" class="auction-input" />
         <button id="btn-submit-bid" class="btn-primary">Miser (0 = passer)</button>
       `;
@@ -508,7 +556,7 @@ function renderActionArea(state) {
       const box = document.createElement("div");
       box.className = "action-box";
       box.innerHTML = `
-        <p>Acheter <strong>${tile.name}</strong> pour <strong>${tile.price}</strong> ?</p>
+        <p>Acheter ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong> pour <strong>${tile.price}</strong> ?</p>
         <button id="btn-buy" class="btn-primary">Acheter</button>
         <button id="btn-pass">Passer</button>
       `;
@@ -560,18 +608,53 @@ function renderPropertiesModal() {
   if (!latestGameState) return;
   document.getElementById("properties-error").textContent = "";
 
+  let html = "";
+
+  if (latestGameState.forcedAuctionsPerGame > 0) {
+    const me = latestGameState.players.find((p) => p.id === myPlayerId);
+    const used = me ? me.forcedAuctionsUsed : 0;
+    const remaining = latestGameState.forcedAuctionsPerGame - used;
+    const availableTiles = latestGameState.board
+      .map((tile, index) => ({ tile, index }))
+      .filter(({ tile }) => ["property", "airport", "utility"].includes(tile.type) && tile.owner === null);
+
+    html += `<h3 class="trade-section-title">🔨 Enchère forcée (${remaining}/${latestGameState.forcedAuctionsPerGame} restante(s))</h3>`;
+    if (remaining <= 0) {
+      html += `<p class="properties-empty">Tu as déjà utilisé toutes tes enchères forcées.</p>`;
+    } else if (availableTiles.length === 0) {
+      html += `<p class="properties-empty">Aucune case libre à mettre aux enchères.</p>`;
+    } else {
+      const options = availableTiles
+        .map(({ tile, index }) => `<option value="${index}">${tile.name} (${tile.price})</option>`)
+        .join("");
+      html += `
+        <div class="trade-form">
+          <label>Case à mettre aux enchères <select id="forced-auction-target">${options}</select></label>
+          <button id="btn-start-forced-auction" class="btn-primary">Déclencher l'enchère</button>
+        </div>
+      `;
+    }
+  }
+
   const myTiles = latestGameState.board
     .map((tile, index) => ({ tile, index }))
     .filter(({ tile }) => tile.owner === myPlayerId);
 
-  if (myTiles.length === 0) {
-    propertiesList.innerHTML = `<p class="properties-empty">Tu ne possèdes aucune propriété pour le moment.</p>`;
-    return;
-  }
+  html += `<h3 class="trade-section-title">🏠 Mes propriétés</h3>`;
+  html +=
+    myTiles.length === 0
+      ? `<p class="properties-empty">Tu ne possèdes aucune propriété pour le moment.</p>`
+      : myTiles.map(({ tile, index }) => renderPropertyRow(tile, index)).join("");
 
-  propertiesList.innerHTML = myTiles
-    .map(({ tile, index }) => renderPropertyRow(tile, index))
-    .join("");
+  propertiesList.innerHTML = html;
+
+  const forcedAuctionBtn = document.getElementById("btn-start-forced-auction");
+  if (forcedAuctionBtn) {
+    forcedAuctionBtn.addEventListener("click", () => {
+      const tileIndex = Number(document.getElementById("forced-auction-target").value);
+      socket.emit("game:startForcedAuction", { tileIndex });
+    });
+  }
 
   // Boutons "construire"
   propertiesList.querySelectorAll("[data-action='build']").forEach((btn) => {
@@ -627,7 +710,7 @@ function renderPropertyRow(tile, index) {
   return `
     <div class="property-row ${tile.mortgaged ? "property-row--mortgaged" : ""}">
       <div class="property-row__info">
-        <strong>${tile.name}</strong> ${buildingLabel}
+        ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong> ${buildingLabel}
         ${tile.mortgaged ? '<span class="mortgaged-tag">Hypothéquée</span>' : ""}
       </div>
       <div class="property-row__actions">${buttons.join("")}</div>
@@ -702,6 +785,143 @@ function renderPowerModal() {
   }
 }
 
+// Fenêtre de détail d'une case : cliquée depuis le plateau (n'importe
+// quel joueur, n'importe quand — information toujours publique).
+function renderTileDetailModal(tileIndex) {
+  if (!latestGameState) return;
+  const tile = latestGameState.board[tileIndex];
+  const content = document.getElementById("tile-detail-content");
+  document.getElementById("tile-detail-title").innerHTML = `${ReachUpBoardView.tileSwatch(tile)} ${tile.name}`;
+
+  const ownerLine = () => {
+    if (tile.owner === null || tile.owner === undefined) return `<p>Libre — appartient à personne.</p>`;
+    const owner = latestGameState.players[tile.owner];
+    return `<p>Propriétaire : <strong>${owner.name}</strong>${tile.mortgaged ? " (hypothéquée 🔒)" : ""}</p>`;
+  };
+
+  if (tile.type === "property") {
+    const rows = [0, 1, 2, 3, 4, 5]
+      .map((houses) => {
+        const rent = tile.rent * latestGameState.rentMultipliersByHouses[houses];
+        const label = houses === 0 ? "Juste la propriété" : houses === 5 ? "Hôtel" : `${houses} maison(s)`;
+        const isCurrent = tile.houses === houses;
+        return `<tr class="${isCurrent ? "tile-detail-row--current" : ""}"><td>${label}</td><td>${rent}</td></tr>`;
+      })
+      .join("");
+    content.innerHTML = `
+      <p>Prix d'achat : <strong>${tile.price}</strong> — Coût d'une maison/étage : <strong>${tile.houseCost}</strong></p>
+      ${ownerLine()}
+      <table class="tile-detail-table">
+        <thead><tr><th>Situation</th><th>Loyer</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="properties-empty">Loyer x2 si tu possèdes tout le groupe (sans maison).</p>
+    `;
+  } else if (tile.type === "airport") {
+    const rows = latestGameState.airportRentTable
+      .map((rent, i) => `<tr><td>${i + 1} aéroport(s) possédé(s)</td><td>${rent}</td></tr>`)
+      .join("");
+    content.innerHTML = `
+      <p>Prix d'achat : <strong>${tile.price}</strong></p>
+      ${ownerLine()}
+      <table class="tile-detail-table">
+        <thead><tr><th>Situation</th><th>Loyer</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } else if (tile.type === "utility") {
+    content.innerHTML = `
+      <p>Prix d'achat : <strong>${tile.price}</strong></p>
+      ${ownerLine()}
+      <p>Loyer = lancer de dés × <strong>4</strong> si tu possèdes cette seule compagnie, × <strong>10</strong> si tu possèdes les deux.</p>
+    `;
+  } else if (tile.type === "tax") {
+    content.innerHTML = `<p>Case Taxe : paie <strong>${tile.amount}</strong> en y passant.</p>`;
+  } else {
+    const descriptions = {
+      go: "Case Départ : touche ton salaire chaque fois que tu passes par ici.",
+      jail: "Prison : simple visite si tu n'y es pas envoyé, sinon il faut payer, utiliser une carte, ou faire un double pour sortir.",
+      vacation: "Vacances : aucun effet, sauf si la cagnotte de Vacances est activée (elle est alors reversée ici).",
+      "go-to-jail": "Envoie directement en prison, sans passer par la case Départ.",
+      chance: "Carte Destin : tire un effet aléatoire (argent, déplacement, prison...).",
+      special: "Carte Spéciale : si les événements mondiaux sont activés, déclenche un événement temporaire pour toute la table.",
+    };
+    content.innerHTML = `<p>${descriptions[tile.type] || "Case sans effet particulier."}</p>`;
+  }
+}
+
+function renderReferenceModal() {
+  const content = document.getElementById("reference-content");
+  const chanceList = latestGameState
+    ? latestGameState.chanceCardDescriptions.map((d) => `<li>${d}</li>`).join("")
+    : "<li>Charge une partie pour voir la liste.</li>";
+
+  const eventsList = ReachUpWorldEvents.WORLD_EVENTS.map(
+    (e) => `<li>${e.icon} <strong>${e.name}</strong> — ${e.description}</li>`
+  ).join("");
+
+  const powersList = ReachUpPowers.POWERS.map(
+    (p) => `<li>${p.icon} <strong>${p.name}</strong> (${p.type === "passive" ? "passif" : "actif"}) — ${p.description}</li>`
+  ).join("");
+
+  content.innerHTML = `
+    <h3 class="trade-section-title">❓ Cartes Destin / Spéciales possibles</h3>
+    <ul class="reference-list">${chanceList}</ul>
+    <h3 class="trade-section-title">🌍 Événements mondiaux possibles</h3>
+    <ul class="reference-list">${eventsList}</ul>
+    <h3 class="trade-section-title">🔮 Pouvoirs possibles</h3>
+    <ul class="reference-list">${powersList}</ul>
+  `;
+}
+
+function renderStatsModal() {
+  if (!latestGameState) return;
+  const content = document.getElementById("stats-content");
+  const state = latestGameState;
+
+  const withNetWorth = state.players.map((p) => {
+    const propsValue = state.board
+      .filter((t) => t.owner === p.id)
+      .reduce((sum, t) => sum + (t.mortgaged ? Math.floor((t.price || 0) / 2) : t.price || 0), 0);
+    return { ...p, netWorth: p.money + propsValue, propertiesCount: state.board.filter((t) => t.owner === p.id).length };
+  });
+  withNetWorth.sort((a, b) => b.netWorth - a.netWorth);
+
+  const header = state.gameOver
+    ? `<p class="properties-empty">🏆 <strong>${state.winner.name}</strong> remporte la partie en ${state.turnNumber} tours, sur un plateau de ${state.board.length} cases.</p>`
+    : `<p class="properties-empty">Partie en cours — tour ${state.turnNumber}, classement provisoire ci-dessous.</p>`;
+
+  const cards = withNetWorth
+    .map((p, rank) => {
+      const s = p.stats;
+      return `
+        <div class="property-row stats-card">
+          <div class="property-row__info">
+            <strong>${rank === 0 ? "🥇 " : rank === 1 ? "🥈 " : rank === 2 ? "🥉 " : ""}${p.name}${p.bankrupt ? " (faillite)" : ""}</strong>
+            <div class="stats-grid">
+              <span>💰 Argent : <strong>${p.money}</strong></span>
+              <span>📈 Valeur totale : <strong>${p.netWorth}</strong></span>
+              <span>🏷️ Propriétés : <strong>${p.propertiesCount}</strong></span>
+              <span>🏠 Constructions : <strong>${s.housesBuilt}</strong></span>
+              <span>💵 Loyers payés : <strong>${s.rentPaid}</strong></span>
+              <span>💴 Loyers reçus : <strong>${s.rentReceived}</strong></span>
+              <span>💸 Plus gros loyer payé : <strong>${s.biggestRentPaid}</strong></span>
+              <span>🧾 Taxes payées : <strong>${s.taxesPaid}</strong></span>
+              <span>🚔 Fois en prison : <strong>${s.timesInJail}</strong></span>
+              <span>🛒 Achats directs : <strong>${s.propertiesBought}</strong></span>
+              <span>🔨 Enchères gagnées : <strong>${s.auctionsWon}</strong></span>
+              <span>🤝 Échanges conclus : <strong>${s.tradesCompleted}</strong></span>
+              <span>🏁 Salaire encaissé : <strong>${s.salaryCollected}</strong></span>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  content.innerHTML = header + cards;
+}
+
 function renderLoansModal() {
   if (!latestGameState) return;
   document.getElementById("loans-error").textContent = "";
@@ -751,14 +971,16 @@ function renderLoansModal() {
     const me = latestGameState.players.find((p) => p.id === myPlayerId);
     html += `<h3 class="trade-section-title">🛡️ Assurance</h3>`;
     if (me.insurance) {
-      html += `<p class="properties-empty">Assurance active : ${me.insurance.coveragePercent}% des loyers pris en charge, encore ${me.insurance.turnsRemaining} tour(s).</p>`;
+      html += `<p class="properties-empty">Formule <strong>${me.insurance.planName}</strong> active : ${me.insurance.coveragePercent}% des loyers pris en charge, encore ${me.insurance.turnsRemaining} tour(s).</p>`;
     } else {
-      html += `
-        <div class="property-row">
-          <div class="property-row__info">Souscrire une assurance (coût 100, couvre 50% des loyers pendant 8 tours).</div>
-          <div class="property-row__actions"><button id="btn-buy-insurance" class="btn-primary">Souscrire</button></div>
-        </div>
-      `;
+      html += ReachUpInsurance.INSURANCE_PLANS.map(
+        (plan) => `
+          <div class="property-row">
+            <div class="property-row__info"><strong>${plan.name}</strong> — coût ${plan.premium}, couvre ${plan.coveragePercent}% des loyers pendant ${plan.duration} tours</div>
+            <div class="property-row__actions"><button data-buy-insurance="${plan.id}" class="btn-primary">Souscrire</button></div>
+          </div>
+        `
+      ).join("");
     }
   }
 
@@ -795,10 +1017,10 @@ function renderLoansModal() {
     btn.addEventListener("click", () => socket.emit("game:repayLoan", { loanId: Number(btn.dataset.repayLoan) }));
   });
 
-  const buyInsuranceBtn = document.getElementById("btn-buy-insurance");
-  if (buyInsuranceBtn) {
-    buyInsuranceBtn.addEventListener("click", () => socket.emit("game:buyInsurance"));
-  }
+  const buyInsuranceBtns = loansContent.querySelectorAll("[data-buy-insurance]");
+  buyInsuranceBtns.forEach((btn) => {
+    btn.addEventListener("click", () => socket.emit("game:buyInsurance", { planId: Number(btn.dataset.buyInsurance) }));
+  });
 }
 
 function renderIncomingLoanOffer(offer) {
@@ -861,7 +1083,7 @@ function renderTradeModal() {
     .join("");
 
   const tileCheckbox = (tile, index, className) =>
-    `<label class="tile-checkbox"><input type="checkbox" class="${className}" value="${index}" /> ${tile.name}</label>`;
+    `<label class="tile-checkbox"><input type="checkbox" class="${className}" value="${index}" /> ${ReachUpBoardView.tileSwatch(tile)} ${tile.name}</label>`;
 
   const myTilesHtml =
     myTiles.map(({ tile, index }) => tileCheckbox(tile, index, "offer-tile")).join("") ||
@@ -968,9 +1190,9 @@ function renderTradeRow(trade, isIncoming) {
     `;
   }
 
-  const offerNames = trade.offerTiles.map((i) => latestGameState.board[i].name);
+  const offerNames = trade.offerTiles.map((i) => `${ReachUpBoardView.tileSwatch(latestGameState.board[i])} ${latestGameState.board[i].name}`);
   if (trade.offerMoney > 0) offerNames.push(`${trade.offerMoney} 💰`);
-  const requestNames = trade.requestTiles.map((i) => latestGameState.board[i].name);
+  const requestNames = trade.requestTiles.map((i) => `${ReachUpBoardView.tileSwatch(latestGameState.board[i])} ${latestGameState.board[i].name}`);
   if (trade.requestMoney > 0) requestNames.push(`${trade.requestMoney} 💰`);
 
   const description = isIncoming

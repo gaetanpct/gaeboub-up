@@ -113,8 +113,10 @@
 
     el.innerHTML = `
       <div class="board-tile__band"></div>
-      <div class="board-tile__icon">${tileIcon(tile)}</div>
-      <div class="board-tile__buildings" data-buildings-for="${index}"></div>
+      <div class="board-tile__top-row">
+        <span class="board-tile__icon">${tileIcon(tile)}</span>
+        <span class="board-tile__buildings" data-buildings-for="${index}"></span>
+      </div>
       <div class="board-tile__name">${tile.short}</div>
     `;
     return el;
@@ -124,6 +126,7 @@
   let tokensLayerEl = null;
   let tokenElements = {};
   let lastRenderedRollKey = null;
+  let onTileClickCallback = null;
 
   function initBoard(boardData) {
     boardEl = document.getElementById("board-grid");
@@ -138,7 +141,18 @@
     lastRenderedRollKey = null;
 
     boardData.forEach((tile, index) => {
-      boardEl.appendChild(buildTileElement(tile, index, boardData.length));
+      const el = buildTileElement(tile, index, boardData.length);
+      el.classList.add("board-tile--clickable");
+      boardEl.appendChild(el);
+    });
+
+    // Une seule écoute de clic (délégation) sur tout le plateau, plutôt
+    // qu'une par case : plus léger, et fonctionne même si les cases sont
+    // reconstruites plus tard.
+    boardEl.addEventListener("click", (event) => {
+      const tileEl = event.target.closest(".board-tile");
+      if (!tileEl || !onTileClickCallback) return;
+      onTileClickCallback(Number(tileEl.dataset.tileIndex));
     });
 
     // Zone centrale : titre + dés + indicateur de tour
@@ -147,7 +161,7 @@
     center.style.gridRow = `2 / ${gridSize}`;
     center.style.gridColumn = `2 / ${gridSize}`;
     center.innerHTML = `
-      <div class="board-center__title">Reach&nbsp;Up</div>
+      <div class="board-center__title">Gaeboub&#8209;up</div>
       <div id="dice-display" class="dice-row"></div>
       <div id="turn-indicator" class="turn-indicator"></div>
       <div id="pot-indicator" class="pot-indicator"></div>
@@ -282,5 +296,19 @@
     }
   }
 
-  window.ReachUpBoardView = { initBoard, updateBoard, renderPreview, PLAYER_COLORS };
+  function onTileClick(callback) {
+    onTileClickCallback = callback;
+  }
+
+  // Petit HTML réutilisable pour situer une propriété par sa couleur (ou
+  // son icône si ce n'est pas un groupe coloré) n'importe où dans
+  // l'interface (échanges, enchères, listes...) — Phase 10.
+  function tileSwatch(tile) {
+    if (tile.group && GROUP_COLORS[tile.group]) {
+      return `<span class="tile-swatch" style="background:${GROUP_COLORS[tile.group]}"></span>`;
+    }
+    return `<span class="tile-swatch tile-swatch--icon">${tileIcon(tile)}</span>`;
+  }
+
+  window.ReachUpBoardView = { initBoard, updateBoard, renderPreview, onTileClick, tileSwatch, GROUP_COLORS, PLAYER_COLORS };
 })();

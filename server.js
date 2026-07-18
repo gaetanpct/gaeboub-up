@@ -496,14 +496,29 @@ io.on("connection", (socket) => {
     broadcastGame(room);
   });
 
-  // ---- Assurance (Phase 8e) ----
-  socket.on("game:buyInsurance", () => {
+  // ---- Assurance (Phase 8e, formules multiples Phase 10) ----
+  socket.on("game:buyInsurance", (payload = {}) => {
     const room = getRoom(socket);
     if (!room || !room.started || !room.engine) return;
     const myPlayerId = room.socketToPlayerId[socket.id];
     if (myPlayerId === undefined) return;
 
-    const result = room.engine.buyInsurance(myPlayerId);
+    const result = room.engine.buyInsurance(myPlayerId, payload.planId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  // ---- Enchères forcées (Phase 10) ----
+  socket.on("game:startForcedAuction", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.startForcedAuction(myPlayerId, payload.tileIndex);
     if (!result || !result.ok) {
       socket.emit("room:error", (result && result.reason) || "Action impossible.");
       return;
@@ -537,5 +552,5 @@ io.on("connection", (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Serveur Reach Up démarré sur le port ${PORT}`);
+  console.log(`Serveur Gaeboub-up démarré sur le port ${PORT}`);
 });

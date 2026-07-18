@@ -319,73 +319,104 @@ button:disabled {
 
 .board-grid {
   position: relative;
-  width: min(94vw, 640px);
+  width: min(96vw, 700px);
   aspect-ratio: 1 / 1;
   display: grid;
   grid-template-columns: repeat(11, 1fr);
   grid-template-rows: repeat(11, 1fr);
   background: #0e0b17;
-  border-radius: 10px;
-  padding: 4px;
+  border-radius: 12px;
+  padding: 5px;
   gap: 2px;
+  container-type: inline-size;
 }
 
 .board-tile {
   position: relative;
-  background: #1e1830;
-  border-radius: 3px;
+  background: #201a33;
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  gap: 1px;
-  font-size: 0.5rem;
-  line-height: 1.05;
   text-align: center;
-  padding: 2px 1px 3px;
   overflow: hidden;
-  color: #cfc9de;
+  color: #e4e0f2;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.board-tile--clickable {
+  cursor: pointer;
+}
+
+.board-tile--clickable:hover {
+  filter: brightness(1.22);
 }
 
 .board-tile--corner {
-  background: #241c3a;
-  font-size: 0.6rem;
-  font-weight: 700;
+  background: #2a2145;
   justify-content: center;
   color: #f2f0f7;
+  gap: 0.15em;
+}
+
+.board-tile--corner .board-tile__icon {
+  font-size: 3.6cqw;
+}
+
+.board-tile--corner .board-tile__name {
+  font-size: 1.9cqw;
+  font-weight: 800;
+  letter-spacing: 0.03em;
 }
 
 .board-tile--property {
-  padding-top: 7px;
+  padding-top: 22%;
 }
 
+/* La bande de couleur est maintenant un vrai bandeau proéminent (façon
+   carte de jeu), pas un simple filet — c'est ce qui permet d'identifier
+   un groupe au premier coup d'œil, même à distance. */
 .board-tile__band {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 5px;
+  height: 20%;
   background: var(--group-color, transparent);
+  box-shadow: inset 0 -2px 3px rgba(0, 0, 0, 0.25);
 }
 
 .board-tile--owned {
-  box-shadow: inset 0 0 0 2px var(--owner-color, transparent);
+  box-shadow: inset 0 0 0 2.5px var(--owner-color, transparent), inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.board-tile__top-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2em;
+  min-height: 1.6cqw;
 }
 
 .board-tile__icon {
-  font-size: 0.75rem;
+  font-size: 2.2cqw;
+  line-height: 1;
 }
 
 .board-tile__buildings {
-  font-size: 0.4rem;
+  font-size: 1.5cqw;
   line-height: 1;
-  letter-spacing: -1px;
-  min-height: 0.5rem;
+  letter-spacing: -0.05em;
 }
 
 .board-tile__name {
-  font-size: 0.48rem;
+  font-size: 1.55cqw;
+  font-weight: 600;
+  line-height: 1.15;
   word-break: break-word;
+  padding: 0.15em 0.2em 0.3em;
+  color: #f5f3fb;
 }
 
 .board-center {
@@ -400,7 +431,7 @@ button:disabled {
 
 .board-center__title {
   font-weight: 800;
-  font-size: clamp(1rem, 3vw, 1.5rem);
+  font-size: clamp(1.1rem, 3.4cqw, 1.9rem);
   color: #f2f0f7;
   letter-spacing: 0.02em;
 }
@@ -598,7 +629,7 @@ body.is-game-screen .app {
 }
 
 .game-layout .board-grid {
-  width: min(72vh, 44vw, 620px);
+  width: min(86vh, 58vw, 820px);
 }
 
 .game-sidebar {
@@ -688,7 +719,7 @@ body.is-game-screen .app {
   }
 
   .game-layout .board-grid {
-    width: min(90vw, 46vh, 480px);
+    width: min(94vw, 54vh, 560px);
     margin: 0 auto;
   }
 
@@ -1045,4 +1076,88 @@ body.is-game-screen .app {
 
 .btn-icon:hover {
   background: #352c4f;
+}
+
+/* ============================================================
+   Phase 10 : pastilles de couleur, détail de case, statistiques,
+   référence des cartes/événements
+   ============================================================ */
+
+.tile-swatch {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-right: 0.15em;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.tile-swatch--icon {
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.9em;
+  width: auto;
+  height: auto;
+}
+
+.modal-box--wide {
+  width: min(680px, 100%);
+}
+
+.tile-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.85rem;
+}
+
+.tile-detail-table th,
+.tile-detail-table td {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid #2e2745;
+}
+
+.tile-detail-table th {
+  color: #9d94b3;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.tile-detail-row--current {
+  background: #2a2340;
+  font-weight: 700;
+  color: #ffd76a;
+}
+
+.reference-list {
+  list-style: none;
+  margin: 0 0 0.8rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.reference-list li {
+  background: #1e1830;
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.82rem;
+  color: #cfc9de;
+}
+
+.stats-card .property-row__info {
+  width: 100%;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.3rem 0.8rem;
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+  color: #cfc9de;
 }
