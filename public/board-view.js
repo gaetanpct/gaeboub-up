@@ -16,7 +16,8 @@
 // ============================================================
 
 (function () {
-  const PLAYER_COLORS = ["#ff5c72", "#4fd1ff", "#ffd76a", "#8effc1"];
+  // Tons "pierres précieuses", identiques aux tokens --player-1..4 du CSS.
+  const PLAYER_COLORS = ["#c0455c", "#4a83c4", "#3f9e6e", "#9c5cc7"];
 
   const GROUP_COLORS = {
     marron: "#8d5b4c",
@@ -155,7 +156,9 @@
       onTileClickCallback(Number(tileEl.dataset.tileIndex));
     });
 
-    // Zone centrale : titre + dés + indicateur de tour
+    // Zone centrale : titre + dés + indicateur de tour + journal compact.
+    // Volontairement sobre (pas de ville en 3D ni d'éléments décoratifs
+    // en trop) — juste l'essentiel, dans l'esprit d'une table de jeu.
     const center = document.createElement("div");
     center.className = "board-center";
     center.style.gridRow = `2 / ${gridSize}`;
@@ -165,6 +168,10 @@
       <div id="dice-display" class="dice-row"></div>
       <div id="turn-indicator" class="turn-indicator"></div>
       <div id="pot-indicator" class="pot-indicator"></div>
+      <div class="board-center__log-wrap">
+        <div id="board-log-panel" class="board-log-panel"></div>
+        <button id="btn-open-full-log" class="btn-text-link" type="button">Tout voir</button>
+      </div>
     `;
     boardEl.appendChild(center);
 

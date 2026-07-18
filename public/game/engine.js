@@ -122,6 +122,8 @@
           tradesCompleted: 0,
           biggestRentPaid: 0,
           salaryCollected: 0,
+          loansContracted: 0,
+          insuranceBought: 0,
         },
       }));
 
@@ -551,6 +553,30 @@
         this.winner = active[0];
         this.addLog(`🏆 ${this.winner.name} remporte la partie !`);
       }
+    }
+
+    // Abandon volontaire d'un joueur (menu ☰). Ne crée aucune nouvelle
+    // règle : réutilise exactement le mécanisme de faillite déjà en place
+    // (le joueur quitte, ses propriétés redeviennent libres, la victoire
+    // est réévaluée normalement).
+    forfeitGame(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt || this.gameOver) return { ok: false, reason: "Action impossible." };
+
+      player.bankrupt = true;
+      this.board.forEach((tile) => {
+        if (tile.owner === player.id) {
+          tile.owner = null;
+          if (tile.type === "property") tile.houses = 0;
+          if ("mortgaged" in tile) tile.mortgaged = false;
+        }
+      });
+      this.addLog(`🚪 ${player.name} abandonne la partie.`);
+      this.checkVictory();
+      if (!this.gameOver && this.currentPlayerIndex === playerId) {
+        this.nextPlayer();
+      }
+      return { ok: true };
     }
 
     // Valeur totale d'un joueur : argent en poche + valeur de ses
@@ -1168,6 +1194,7 @@
         turnsRemaining: offer.duration,
       });
       this.loanOffers.splice(idx, 1);
+      borrower.stats.loansContracted += 1;
       this.addLog(
         `💳 ${borrower.name} accepte le prêt de ${lender.name} : ${offer.principal} reçus maintenant, ${offer.totalOwed} à rembourser dans ${offer.duration} tours.`
       );
@@ -1251,6 +1278,7 @@
 
       this.pay(player, null, premium);
       player.insurance = { planId: plan.id, planName: plan.name, turnsRemaining: plan.duration, coveragePercent: plan.coveragePercent };
+      player.stats.insuranceBought += 1;
       this.addLog(
         `🛡️ ${player.name} souscrit l'assurance ${plan.name} pour ${premium} (${plan.coveragePercent}% des loyers pris en charge pendant ${plan.duration} tours).`
       );

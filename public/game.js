@@ -229,7 +229,6 @@ socket.on("room:update", (room) => {
 // ============================================================
 const playersPanel = document.getElementById("players-panel");
 const actionArea = document.getElementById("action-area");
-const logPanel = document.getElementById("log-panel");
 const propertiesModal = document.getElementById("properties-modal");
 const propertiesList = document.getElementById("properties-list");
 const btnOpenProperties = document.getElementById("btn-open-properties");
@@ -254,6 +253,54 @@ refreshSoundButton();
 btnToggleSound.addEventListener("click", () => {
   ReachUpSounds.toggleMuted();
   refreshSoundButton();
+});
+
+const fullLogModal = document.getElementById("full-log-modal");
+const btnCloseFullLog = document.getElementById("btn-close-full-log");
+btnCloseFullLog.addEventListener("click", () => { fullLogModal.hidden = true; });
+fullLogModal.addEventListener("click", (event) => {
+  if (event.target === fullLogModal) fullLogModal.hidden = true;
+});
+// Le bouton "Tout voir" est créé dynamiquement dans la zone centrale du
+// plateau (board-view.js) : délégation d'événement pour le capter quel
+// que soit le moment où il apparaît dans le DOM.
+document.addEventListener("click", (event) => {
+  if (event.target && event.target.id === "btn-open-full-log") {
+    fullLogModal.hidden = false;
+    if (latestGameState) renderLog(latestGameState);
+  }
+});
+
+const summaryModal = document.getElementById("summary-modal");
+const btnOpenSummary = document.getElementById("btn-open-summary");
+const btnCloseSummary = document.getElementById("btn-close-summary");
+btnOpenSummary.addEventListener("click", () => {
+  summaryModal.hidden = false;
+  renderSummaryModal();
+});
+btnCloseSummary.addEventListener("click", () => { summaryModal.hidden = true; });
+summaryModal.addEventListener("click", (event) => {
+  if (event.target === summaryModal) summaryModal.hidden = true;
+});
+
+const menuModal = document.getElementById("menu-modal");
+const btnMenu = document.getElementById("btn-menu");
+const btnCloseMenu = document.getElementById("btn-close-menu");
+const btnForfeit = document.getElementById("btn-forfeit");
+const forfeitConfirm = document.getElementById("forfeit-confirm");
+btnMenu.addEventListener("click", () => {
+  forfeitConfirm.hidden = true;
+  menuModal.hidden = false;
+});
+btnCloseMenu.addEventListener("click", () => { menuModal.hidden = true; });
+menuModal.addEventListener("click", (event) => {
+  if (event.target === menuModal) menuModal.hidden = true;
+});
+btnForfeit.addEventListener("click", () => { forfeitConfirm.hidden = false; });
+document.getElementById("btn-forfeit-cancel").addEventListener("click", () => { forfeitConfirm.hidden = true; });
+document.getElementById("btn-forfeit-confirm").addEventListener("click", () => {
+  socket.emit("game:forfeit");
+  menuModal.hidden = true;
 });
 
 const loansModal = document.getElementById("loans-modal");
@@ -345,33 +392,188 @@ let lastLogLength = 0;
 socket.on("game:started", ({ state, socketToPlayerId, settings }) => {
   myPlayerId = socketToPlayerId[socket.id];
   latestGameSettings = settings || null;
-  lastLogLength = state.log.length; // pas de son rétroactif sur le journal déjà existant
+  lastLogLength = state.log.length; // pas de notification rétroactive sur le journal déjà existant
   showScreen("game");
   renderGame(state);
 });
 
 socket.on("game:update", ({ state, settings }) => {
   if (settings) latestGameSettings = settings;
-  playSoundsForNewLogLines(state);
+  processNewLogLines(state);
   renderGame(state);
 });
 
 // Ne connaît aucune règle du jeu : lit juste les nouvelles lignes du
-// journal (déjà écrites en langage humain par le moteur) et joue un son
-// adapté selon des mots-clés simples. Découplé du reste, donc n'importe
-// quelle action future produit un son "gratuitement" si son log contient
-// les bons mots, sans avoir à toucher au moteur.
-function playSoundsForNewLogLines(state) {
+// journal (déjà écrites en langage humain par le moteur) et en déduit un
+// son, une notification, et/ou une carte animée selon des mots-clés
+// simples. Découplé du reste, donc n'importe quelle action future produit
+// une notification "gratuitement" si son log contient les bons mots, sans
+// avoir à toucher au moteur.
+function processNewLogLines(state) {
   const newLines = state.log.slice(lastLogLength);
   lastLogLength = state.log.length;
 
   newLines.forEach((line) => {
+    // --- Sons (inchangé) ---
     if (line.includes("remporte la partie")) ReachUpSounds.playVictory();
     else if (line.includes("faillite")) ReachUpSounds.playError();
     else if (line.includes("lance les dés")) ReachUpSounds.playDiceRoll();
     else if (line.includes("Carte Destin") || line.includes("Carte Spéciale") || line.includes("Événement mondial")) ReachUpSounds.playCardDraw();
     else if (line.includes("achète") || line.includes("paie") || line.includes("rembourse") || line.includes("reçoit")) ReachUpSounds.playCoin();
+
+    // --- Carte animée (Destin / Spéciale / Événement mondial) ---
+    const cardMatch = line.match(/tire une (Carte Destin|Carte Spéciale) : "(.+)"$/);
+    if (cardMatch) {
+      showCardReveal(cardMatch[1] === "Carte Destin" ? "❓ Carte Destin" : "✨ Carte Spéciale", cardMatch[2]);
+      return;
+    }
+    const eventMatch = line.match(/Événement mondial : "(.+)" ! (.+) \(\d+ tours?\)$/);
+    if (eventMatch) {
+      showCardReveal(`🌍 Événement mondial — ${eventMatch[1]}`, eventMatch[2], { dramatic: true });
+      return;
+    }
+
+    // --- Notifications temporaires (toasts) ---
+    const playerId = findPlayerIdInLine(state, line);
+    if (line.includes("achète") && !line.includes("Échange")) {
+      showToast(`🏠 ${line}`, playerId);
+    } else if (line.includes("remporte l'enchère")) {
+      showToast(`🔨 ${line}`, playerId);
+    } else if (line.includes("souscrit l'assurance")) {
+      showToast(`🛡️ ${line}`, playerId);
+    } else if (line.includes("reçoit le pouvoir")) {
+      showToast(line, null);
+    } else if (line.includes("accepte le prêt de")) {
+      showToast(`💳 ${line}`, playerId);
+    } else if (line.includes("Échange conclu entre")) {
+      showToast(`🤝 ${line}`, null);
+    } else if (line.includes("est en faillite")) {
+      showToast(line, playerId);
+    } else if (line.includes("abandonne la partie")) {
+      showToast(`🚪 ${line}`, playerId);
+    }
   });
+}
+
+// Retrouve l'identifiant du joueur dont le nom commence la ligne de
+// journal (la quasi-totalité des messages du moteur suivent ce format),
+// pour pouvoir teinter une notification avec sa couleur.
+function findPlayerIdInLine(state, line) {
+  const player = state.players.find((p) => line.startsWith(p.name));
+  return player ? player.id : null;
+}
+
+// ---- Notifications temporaires ("toasts") ----
+const toastContainer = document.getElementById("toast-container");
+
+function showToast(message, playerId) {
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  if (playerId !== null && playerId !== undefined) {
+    toast.style.borderLeftColor = ReachUpBoardView.PLAYER_COLORS[playerId % ReachUpBoardView.PLAYER_COLORS.length];
+  }
+  toast.textContent = message;
+  toastContainer.appendChild(toast);
+
+  // Petit délai avant l'apparition pour laisser jouer la transition CSS.
+  const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 16));
+  raf(() => toast.classList.add("toast--visible"));
+
+  setTimeout(() => {
+    toast.classList.remove("toast--visible");
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+// ---- Carte animée (Destin / Spéciale / Événement mondial) ----
+const cardReveal = document.getElementById("card-reveal");
+const cardRevealTitle = document.getElementById("card-reveal-title");
+const cardRevealText = document.getElementById("card-reveal-text");
+let cardRevealTimeout = null;
+
+function showCardReveal(title, text, options = {}) {
+  cardRevealTitle.textContent = title;
+  cardRevealText.textContent = text;
+  cardReveal.classList.toggle("card-reveal--dramatic", !!options.dramatic);
+  cardReveal.hidden = false;
+
+  if (cardRevealTimeout) clearTimeout(cardRevealTimeout);
+  cardRevealTimeout = setTimeout(() => {
+    cardReveal.hidden = true;
+  }, options.dramatic ? 4500 : 3500);
+}
+
+cardReveal.addEventListener("click", () => {
+  cardReveal.hidden = true;
+  if (cardRevealTimeout) clearTimeout(cardRevealTimeout);
+});
+
+// ---- Alerte automatique : une offre (échange ou prêt) m'est destinée ----
+// On ouvre la fenêtre concernée toute seule dès qu'une offre NOUVELLE
+// m'arrive, plutôt que d'attendre que le joueur pense à cliquer sur le
+// bouton. On ne rouvre pas pour une offre déjà vue (l'utilisateur a pu la
+// fermer volontairement sans décider tout de suite).
+const seenIncomingOfferIds = new Set();
+
+function checkIncomingOffers(state) {
+  if (myPlayerId === null || myPlayerId === undefined) return;
+
+  const incomingTrades = state.tradeOffers.filter((t) => t.toId === myPlayerId);
+  const newTrade = incomingTrades.find((t) => !seenIncomingOfferIds.has(`trade-${t.id}`));
+  incomingTrades.forEach((t) => seenIncomingOfferIds.add(`trade-${t.id}`));
+  if (newTrade && tradeModal.hidden) {
+    tradeModal.hidden = false;
+    renderTradeModal();
+  }
+
+  const incomingLoans = (state.loanOffers || []).filter((o) => o.borrowerId === myPlayerId);
+  const newLoan = incomingLoans.find((o) => !seenIncomingOfferIds.has(`loan-${o.id}`));
+  incomingLoans.forEach((o) => seenIncomingOfferIds.add(`loan-${o.id}`));
+  if (newLoan && loansModal.hidden) {
+    loansModal.hidden = false;
+    renderLoansModal();
+  }
+}
+
+function renderSummaryModal() {
+  if (!latestGameState) return;
+  const state = latestGameState;
+
+  const ranking = [...state.players]
+    .map((p) => {
+      const propsValue = state.board
+        .filter((t) => t.owner === p.id)
+        .reduce((sum, t) => sum + (t.mortgaged ? Math.floor((t.price || 0) / 2) : t.price || 0), 0);
+      return { ...p, netWorth: p.money + propsValue };
+    })
+    .sort((a, b) => b.netWorth - a.netWorth);
+
+  const rankingHtml = ranking
+    .map((p, i) => {
+      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "";
+      const dot = `<span class="tile-swatch" style="background:${ReachUpBoardView.PLAYER_COLORS[p.id % ReachUpBoardView.PLAYER_COLORS.length]}"></span>`;
+      return `<li>${medal} ${dot}${p.name}${p.bankrupt ? " (faillite)" : ""} — ${p.netWorth}</li>`;
+    })
+    .join("");
+
+  const current = state.players[state.currentPlayerIndex];
+  const lastImportantLine = [...state.log].reverse().find((l) => !l.startsWith("---")) || "—";
+
+  const activeLoansCount = (state.loans || []).length;
+  const activeInsuranceCount = state.players.filter((p) => p.insurance).length;
+
+  const chips = buildActiveRuleChips(state);
+
+  document.getElementById("summary-content").innerHTML = `
+    <p><strong>Tour</strong> ${state.turnNumber}${state.turnLimit ? ` / ${state.turnLimit}` : ""} — au tour de <strong>${state.gameOver ? "—" : current.name}</strong></p>
+    <h3 class="trade-section-title">Classement (valeur totale)</h3>
+    <ul class="reference-list">${rankingHtml}</ul>
+    <h3 class="trade-section-title">Dernier événement important</h3>
+    <p class="properties-empty">${lastImportantLine}</p>
+    <h3 class="trade-section-title">En cours</h3>
+    <p class="properties-empty">💳 ${activeLoansCount} prêt(s) actif(s) — 🛡️ ${activeInsuranceCount} assurance(s) active(s)</p>
+    ${chips ? `<h3 class="trade-section-title">Règles actives pour cette partie</h3><div class="active-rules-chips">${chips}</div>` : ""}
+  `;
 }
 
 function renderGame(state) {
@@ -381,12 +583,13 @@ function renderGame(state) {
   renderActionArea(state);
   renderLog(state);
   renderActiveEventBanner(state);
-  renderActiveRulesPanel(state);
   if (!propertiesModal.hidden) renderPropertiesModal();
   if (!tradeModal.hidden) renderTradeModal();
   if (!powerModal.hidden) renderPowerModal();
   if (!loansModal.hidden) renderLoansModal();
   if (!statsModal.hidden) renderStatsModal();
+  if (!summaryModal.hidden) renderSummaryModal();
+  checkIncomingOffers(state);
 
   const me = state.players.find((p) => p.id === myPlayerId);
   btnOpenPower.hidden = !me || !me.power;
@@ -415,9 +618,7 @@ function renderActiveEventBanner(state) {
 // ce qui a été réellement changé pour cette partie, plus l'événement
 // mondial en cours s'il y en a un. Comme il se base sur le schéma, toute
 // nouvelle règle ajoutée plus tard y apparaît automatiquement.
-function renderActiveRulesPanel(state) {
-  const panel = document.getElementById("active-rules-panel");
-  const chipsContainer = document.getElementById("active-rules-chips");
+function buildActiveRuleChips(state) {
   const chips = [];
 
   if (state.activeEvent) {
@@ -445,12 +646,7 @@ function renderActiveRulesPanel(state) {
     });
   }
 
-  if (chips.length === 0) {
-    panel.hidden = true;
-    return;
-  }
-  panel.hidden = false;
-  chipsContainer.innerHTML = chips.join("");
+  return chips.join("");
 }
 
 function renderPlayers(state) {
@@ -613,9 +809,35 @@ function showWaitingBox(text) {
   actionArea.appendChild(box);
 }
 
+// Devine une catégorie visuelle pour une ligne de journal donnée, à partir
+// de mots-clés déjà présents dans les messages du moteur (aucune règle du
+// jeu à connaître ici, juste du texte).
+function classifyLogLine(line) {
+  if (line.startsWith("---")) return "turn";
+  if (line.includes("remporte la partie") || line.includes("Événement mondial")) return "major";
+  if (line.includes("faillite")) return "negative";
+  if (line.includes("achète") || line.includes("paie") || line.includes("perd")) return "negative-soft";
+  if (line.includes("reçoit") || line.includes("gagne") || line.includes("remporte") || line.includes("touche")) return "positive";
+  return "neutral";
+}
+
 function renderLog(state) {
-  logPanel.innerHTML = state.log.map((line) => `<div>${line}</div>`).join("");
-  logPanel.scrollTop = logPanel.scrollHeight;
+  const boardLogPanel = document.getElementById("board-log-panel");
+  if (boardLogPanel) {
+    const recent = state.log.slice(-6);
+    boardLogPanel.innerHTML = recent
+      .map((line) => `<div class="log-line log-line--${classifyLogLine(line)}">${line}</div>`)
+      .join("");
+    boardLogPanel.scrollTop = boardLogPanel.scrollHeight;
+  }
+
+  const fullLogContent = document.getElementById("full-log-content");
+  if (fullLogContent && !fullLogModal.hidden) {
+    fullLogContent.innerHTML = state.log
+      .map((line) => `<div class="log-line log-line--${classifyLogLine(line)}">${line}</div>`)
+      .join("");
+    fullLogContent.scrollTop = fullLogContent.scrollHeight;
+  }
 }
 
 function renderPropertiesModal() {
@@ -936,6 +1158,8 @@ function renderStatsModal() {
               <span>🔨 Enchères gagnées : <strong>${s.auctionsWon}</strong></span>
               <span>🤝 Échanges conclus : <strong>${s.tradesCompleted}</strong></span>
               <span>🏁 Salaire encaissé : <strong>${s.salaryCollected}</strong></span>
+              <span>💳 Prêts contractés : <strong>${s.loansContracted}</strong></span>
+              <span>🛡️ Assurances souscrites : <strong>${s.insuranceBought}</strong></span>
             </div>
           </div>
         </div>

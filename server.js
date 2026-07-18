@@ -453,6 +453,21 @@ io.on("connection", (socket) => {
     broadcastGame(room);
   });
 
+  // ---- Abandon de partie (Phase 12) ----
+  socket.on("game:forfeit", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.forfeitGame(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
   // ---- Prêts entre joueurs (Phase 8e) ----
   socket.on("game:proposeLoan", (payload = {}) => {
     const room = getRoom(socket);
