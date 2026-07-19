@@ -1,13 +1,18 @@
 // ============================================================
 // REACH UP — Registre des pouvoirs
-// Phase 8c : chaque joueur peut recevoir un pouvoir aléatoire en
-// début de partie (si la règle est activée).
+// Phase 8c, revu en profondeur (Phase 13) : TOUS les pouvoirs sont
+// désormais actifs — c'est toujours le joueur qui choisit le moment de
+// les déclencher, et UNIQUEMENT PENDANT SON PROPRE TOUR (aucun pouvoir
+// ne peut plus être activé "à tout moment").
 //
-// PRINCIPE D'EXTENSION : pour ajouter un nouveau pouvoir plus tard, il
-// suffit d'ajouter une entrée dans POWERS ci-dessous. Les pouvoirs
-// "passive" s'appliquent automatiquement au bon moment (le moteur les
-// vérifie), les pouvoirs "active" sont déclenchés par le joueur via une
-// action explicite (voir engine.js : useTeleportPower / useStealPower).
+// Deux familles :
+//   - mode "arm"     : on l'active, il reste en attente ("armé") jusqu'à
+//                       ce que l'événement concerné se présente (loyer
+//                       reçu, taxe/loyer à payer, achat proposé...).
+//   - mode "instant"  : l'effet a lieu immédiatement à l'activation.
+//
+// PRINCIPE D'EXTENSION : ajouter un pouvoir se fait ici. La logique
+// d'activation/armement est dans engine.js (armPower / useXPower).
 // ============================================================
 
 (function (root, factory) {
@@ -23,57 +28,51 @@
       id: "double_rent",
       name: "Loyer majoré",
       icon: "💰",
-      type: "passive",
-      description: "La prochaine fois qu'un adversaire te paie un loyer, il est doublé, avec un bonus plafonné à 200 (pour éviter un gain démesuré sur un hôtel).",
+      mode: "arm",
+      description: "Active-le à ton tour : la prochaine fois qu'un adversaire te paie un loyer, il est majoré, avec un bonus plafonné à 500 (pour éviter un gain démesuré sur un hôtel).",
     },
     {
       id: "tax_immunity",
       name: "Immunité fiscale",
       icon: "🛡️",
-      type: "passive",
-      description: "La prochaine taxe sur laquelle tu tombes ne te coûte rien.",
+      mode: "arm",
+      description: "Active-le à ton tour : la prochaine taxe OU le prochain loyer sur lequel tu tombes ne te coûte rien.",
     },
     {
       id: "teleport",
       name: "Téléportation",
       icon: "🌀",
-      type: "active",
-      description: "Une fois dans la partie, déplace-toi instantanément sur la case de ton choix (utilisable à tout moment).",
+      mode: "instant",
+      description: "À ton tour, déplace-toi instantanément sur la case de ton choix.",
     },
     {
       id: "theft",
       name: "Vol",
       icon: "🗝️",
-      type: "active",
-      description: "Une fois dans la partie, vole jusqu'à 150 à un adversaire de ton choix (utilisable à tout moment).",
+      mode: "instant",
+      description: "À ton tour, vole jusqu'à 300 à un adversaire de ton choix — à condition qu'il ait plus de 400 sur son compte.",
     },
     {
       id: "discount_purchase",
       name: "Négociateur",
       icon: "🏷️",
-      type: "passive",
-      description: "Ton prochain achat direct d'une propriété coûte 20% de moins.",
-    },
-    {
-      id: "jail_skip",
-      name: "Passe-droit",
-      icon: "🕊️",
-      type: "passive",
-      description: "La prochaine fois que tu devrais aller en prison, tu l'évites complètement.",
+      mode: "arm",
+      description: "Active-le à ton tour : ton prochain achat direct d'une propriété coûte 95% de moins. Si tu refuses ce prochain achat, le pouvoir s'arrête sans effet.",
     },
     {
       id: "bank_loan",
       name: "Prêt bancaire",
       icon: "🏦",
-      type: "active",
-      description: "Une fois dans la partie, reçois 150 directement de la banque (utilisable à tout moment).",
+      mode: "instant",
+      description: "À ton tour, reçois 500 directement de la banque.",
     },
   ];
 
-  const STEAL_AMOUNT = 150;
-  const DOUBLE_RENT_CAP = 200;
-  const DISCOUNT_PURCHASE_PERCENT = 20;
-  const BANK_LOAN_AMOUNT = 150;
+  const STEAL_AMOUNT = 300;
+  const STEAL_MIN_TARGET_MONEY = 400;
+  const DOUBLE_RENT_CAP = 500;
+  const DISCOUNT_PURCHASE_PERCENT = 95;
+  const BANK_LOAN_AMOUNT = 500;
 
   function findPower(id) {
     return POWERS.find((p) => p.id === id) || null;
@@ -83,5 +82,14 @@
     return POWERS[Math.floor(Math.random() * POWERS.length)].id;
   }
 
-  return { POWERS, STEAL_AMOUNT, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, findPower, randomPowerId };
+  return {
+    POWERS,
+    STEAL_AMOUNT,
+    STEAL_MIN_TARGET_MONEY,
+    DOUBLE_RENT_CAP,
+    DISCOUNT_PURCHASE_PERCENT,
+    BANK_LOAN_AMOUNT,
+    findPower,
+    randomPowerId,
+  };
 });

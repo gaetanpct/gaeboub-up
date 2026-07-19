@@ -410,7 +410,21 @@ io.on("connection", (socket) => {
     broadcastGame(room);
   });
 
-  // ---- Pouvoirs (Phase 8c) : jouable à tout moment, comme la gestion des propriétés ----
+  // ---- Pouvoirs (Phase 8c, tous actifs et uniquement à son tour depuis la Phase 13) ----
+  socket.on("game:armPower", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.armPower(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
   socket.on("game:useTeleport", (payload = {}) => {
     const room = getRoom(socket);
     if (!room || !room.started || !room.engine) return;

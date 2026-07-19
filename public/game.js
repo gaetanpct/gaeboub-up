@@ -668,12 +668,20 @@ function renderPlayers(state) {
     if (isCurrent) card.classList.add("player-card--current");
     card.style.borderLeft = `4px solid ${ReachUpBoardView.PLAYER_COLORS[player.id % ReachUpBoardView.PLAYER_COLORS.length]}`;
 
+    const powerStatus = player.power
+      ? player.power.used
+        ? " (utilisé)"
+        : player.power.armed
+        ? " (activé, en attente)"
+        : ""
+      : "";
+
     card.innerHTML = `
       <h3>${player.name}${player.id === myPlayerId ? " (toi)" : ""}</h3>
-      <p>💰 ${player.money}</p>
+      <p class="player-money">💰 ${player.money}</p>
       <p>📍 ${ReachUpBoardView.tileSwatch(tile)} ${tile.name}</p>
       <p>🏷️ ${propertiesCount} propriété(s)</p>
-      ${player.power ? `<p class="power-badge">${ReachUpPowers.findPower(player.power.id).icon} ${ReachUpPowers.findPower(player.power.id).name}${player.power.used ? " (utilisé)" : ""}</p>` : ""}
+      ${player.power ? `<p class="power-badge">${ReachUpPowers.findPower(player.power.id).icon} ${ReachUpPowers.findPower(player.power.id).name}${powerStatus}</p>` : ""}
       <p class="player-status">${statusLabel}</p>
     `;
     playersPanel.appendChild(card);
@@ -965,6 +973,8 @@ function renderPowerModal() {
   }
 
   const power = ReachUpPowers.findPower(me.power.id);
+  const isMyTurn = !latestGameState.gameOver && latestGameState.currentPlayerIndex === myPlayerId;
+
   let html = `
     <div class="property-row">
       <div class="property-row__info">
@@ -976,8 +986,16 @@ function renderPowerModal() {
 
   if (me.power.used) {
     html += `<p class="properties-empty">Ce pouvoir a déjà été utilisé.</p>`;
-  } else if (power.type === "passive") {
-    html += `<p class="properties-empty">Ce pouvoir s'active tout seul au bon moment, rien à faire.</p>`;
+  } else if (power.mode === "arm" && me.power.armed) {
+    html += `<p class="properties-empty">🔔 Activé — en attente de son effet.</p>`;
+  } else if (!isMyTurn) {
+    html += `<p class="properties-empty">⏳ Ce pouvoir ne peut être activé qu'à ton tour.</p>`;
+  } else if (power.mode === "arm") {
+    html += `
+      <div class="trade-form">
+        <button id="btn-arm-power" class="btn-primary">Activer maintenant</button>
+      </div>
+    `;
   } else if (power.id === "teleport") {
     const options = latestGameState.board.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
     html += `
@@ -989,11 +1007,13 @@ function renderPowerModal() {
       </div>
     `;
   } else if (power.id === "theft") {
-    const others = latestGameState.players.filter((p) => p.id !== myPlayerId && !p.bankrupt);
+    const others = latestGameState.players.filter(
+      (p) => p.id !== myPlayerId && !p.bankrupt && p.money > ReachUpPowers.STEAL_MIN_TARGET_MONEY
+    );
     if (others.length === 0) {
-      html += `<p class="properties-empty">Aucune cible disponible.</p>`;
+      html += `<p class="properties-empty">Aucune cible disponible (il faut plus de ${ReachUpPowers.STEAL_MIN_TARGET_MONEY} sur son compte).</p>`;
     } else {
-      const options = others.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+      const options = others.map((p) => `<option value="${p.id}">${p.name} (${p.money})</option>`).join("");
       html += `
         <div class="trade-form">
           <label>Voler
@@ -1006,12 +1026,17 @@ function renderPowerModal() {
   } else if (power.id === "bank_loan") {
     html += `
       <div class="trade-form">
-        <button id="btn-use-power" class="btn-primary">Recevoir 150 de la banque</button>
+        <button id="btn-use-power" class="btn-primary">Recevoir ${ReachUpPowers.BANK_LOAN_AMOUNT} de la banque</button>
       </div>
     `;
   }
 
   powerContent.innerHTML = html;
+
+  const armBtn = document.getElementById("btn-arm-power");
+  if (armBtn) {
+    armBtn.addEventListener("click", () => socket.emit("game:armPower"));
+  }
 
   const useBtn = document.getElementById("btn-use-power");
   if (useBtn && power.id === "teleport") {
@@ -1107,7 +1132,7 @@ function renderReferenceModal() {
   ).join("");
 
   const powersList = ReachUpPowers.POWERS.map(
-    (p) => `<li>${p.icon} <strong>${p.name}</strong> (${p.type === "passive" ? "passif" : "actif"}) — ${p.description}</li>`
+    (p) => `<li>${p.icon} <strong>${p.name}</strong> (${p.mode === "arm" ? "à activer, effet différé" : "effet immédiat"}) — ${p.description}</li>`
   ).join("");
 
   content.innerHTML = `

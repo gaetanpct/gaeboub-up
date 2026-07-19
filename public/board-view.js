@@ -248,7 +248,7 @@
       if (!token) {
         token = document.createElement("div");
         token.className = "token";
-        token.style.background = PLAYER_COLORS[player.id % PLAYER_COLORS.length];
+        token.style.setProperty("--token-color", PLAYER_COLORS[player.id % PLAYER_COLORS.length]);
         token.textContent = player.name.charAt(0).toUpperCase();
         token.title = player.name;
         tokensLayerEl.appendChild(token);

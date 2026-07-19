@@ -17,12 +17,12 @@
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
     const { BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES } = require("./board.js");
-    const { POWERS, STEAL_AMOUNT, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId } = require("./powers.js");
+    const { POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId } = require("./powers.js");
     const { WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent } = require("./world-events.js");
     const { INSURANCE_PLANS } = require("./insurance-plans.js");
     module.exports = factory(
       BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
-      POWERS, STEAL_AMOUNT, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId,
+      POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId,
       WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
       INSURANCE_PLANS
     );
@@ -33,14 +33,14 @@
     const ins = root.ReachUpInsurance;
     root.ReachUpEngine = factory(
       b.BOARD, b.CHANCE_CARDS, b.HOUSE_COST_BY_GROUP, b.RENT_MULTIPLIERS_BY_HOUSES,
-      p.POWERS, p.STEAL_AMOUNT, p.DOUBLE_RENT_CAP, p.DISCOUNT_PURCHASE_PERCENT, p.BANK_LOAN_AMOUNT, p.randomPowerId,
+      p.POWERS, p.STEAL_AMOUNT, p.STEAL_MIN_TARGET_MONEY, p.DOUBLE_RENT_CAP, p.DISCOUNT_PURCHASE_PERCENT, p.BANK_LOAN_AMOUNT, p.randomPowerId,
       w.WORLD_EVENTS, w.EVENT_DURATION_TURNS, w.FREQUENCY_PROBABILITY, w.randomEvent,
       ins.INSURANCE_PLANS
     );
   }
 })(typeof window !== "undefined" ? window : globalThis, function (
   BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
-  POWERS, STEAL_AMOUNT, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId,
+  POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId,
   WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
   INSURANCE_PLANS
 ) {
@@ -108,7 +108,7 @@
         jailTurns: 0,
         jailFreeCards: 0,
         bankrupt: false,
-        power: this.powersEnabled ? { id: randomPowerId(), used: false } : null,
+        power: this.powersEnabled ? { id: randomPowerId(), used: false, armed: false } : null,
         insurance: null, // { planId, planName, turnsRemaining, coveragePercent }
         forcedAuctionsUsed: 0,
         stats: {
@@ -202,11 +202,6 @@
     }
 
     sendToJail(player) {
-      if (player.power && player.power.id === "jail_skip" && !player.power.used) {
-        player.power.used = true;
-        this.addLog(`🕊️ ${player.name} utilise son pouvoir et évite la prison !`);
-        return;
-      }
       // La case Prison est toujours au premier quart du plateau (comme sur
       // le plateau fixe), quelle que soit la taille réelle de celui-ci.
       player.position = this.board.length / 4;
@@ -225,13 +220,26 @@
     // Applique (et consomme) le pouvoir "loyer doublé" du propriétaire s'il
     // en a un disponible. Renvoie le loyer éventuellement doublé.
     _applyDoubleRentPower(owner, rent) {
-      if (owner.power && owner.power.id === "double_rent" && !owner.power.used) {
+      if (owner.power && owner.power.id === "double_rent" && owner.power.armed && !owner.power.used) {
         owner.power.used = true;
+        owner.power.armed = false;
         const bonus = Math.min(rent, DOUBLE_RENT_CAP);
-        this.addLog(`💰 ${owner.name} utilise son pouvoir : loyer majoré de ${bonus} (plafonné à ${DOUBLE_RENT_CAP}) !`);
+        this.addLog(`💰 ${owner.name} déclenche son pouvoir : loyer majoré de ${bonus} (plafonné à ${DOUBLE_RENT_CAP}) !`);
         return rent + bonus;
       }
       return rent;
+    }
+
+    // Consomme l'immunité fiscale du joueur si elle est armée (et pas déjà
+    // utilisée), et renvoie true si c'était le cas — couvre aussi bien une
+    // taxe qu'un loyer à payer, au choix du premier qui se présente.
+    _consumeTaxImmunityIfArmed(player) {
+      if (player.power && player.power.id === "tax_immunity" && player.power.armed && !player.power.used) {
+        player.power.used = true;
+        player.power.armed = false;
+        return true;
+      }
+      return false;
     }
 
     // Paie un loyer en tenant compte d'une éventuelle assurance active chez
@@ -251,11 +259,37 @@
       this.pay(payer, owner, rent);
     }
 
-    // Pouvoir actif "Téléportation" : utilisable à tout moment (pas
-    // seulement à son tour), une seule fois par partie.
+    // Vrai pour toute activation de pouvoir désormais : uniquement
+    // possible pendant SON PROPRE tour (jamais "à tout moment").
+    _isMyTurn(playerId) {
+      return !this.gameOver && this.currentPlayerIndex === playerId;
+    }
+
+    // Active un pouvoir de type "arm" (loyer majoré, immunité fiscale,
+    // négociateur) : il reste en attente jusqu'à ce que l'événement
+    // concerné se présente. Ne fait rien pour un pouvoir "instant" (ceux-là
+    // ont leur propre méthode dédiée, l'effet est immédiat).
+    armPower(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Un pouvoir ne peut être activé qu'à ton propre tour." };
+      if (!player.power) return { ok: false, reason: "Tu n'as pas de pouvoir." };
+      if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+      if (player.power.armed) return { ok: false, reason: "Ce pouvoir est déjà activé, en attente." };
+
+      const power = POWERS.find((p) => p.id === player.power.id);
+      if (!power || power.mode !== "arm") return { ok: false, reason: "Ce pouvoir ne se déclenche pas de cette façon." };
+
+      player.power.armed = true;
+      this.addLog(`${power.icon} ${player.name} active son pouvoir "${power.name}" — en attente.`);
+      return { ok: true };
+    }
+
+    // Pouvoir "Téléportation" (instant) : uniquement à son tour.
     useTeleportPower(playerId, tileIndex) {
       const player = this.players[playerId];
       if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
       if (!player.power || player.power.id !== "teleport") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
       if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
       if (tileIndex < 0 || tileIndex >= this.board.length) return { ok: false, reason: "Case invalide." };
@@ -267,11 +301,11 @@
       return { ok: true };
     }
 
-    // Pouvoir actif "Prêt bancaire" : reçoit un montant fixe de la banque,
-    // utilisable à tout moment, une seule fois par partie.
+    // Pouvoir "Prêt bancaire" (instant) : uniquement à son tour.
     useBankLoanPower(playerId) {
       const player = this.players[playerId];
       if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
       if (!player.power || player.power.id !== "bank_loan") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
       if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
 
@@ -280,15 +314,21 @@
       this.addLog(`🏦 ${player.name} utilise son pouvoir et reçoit ${BANK_LOAN_AMOUNT} de la banque !`);
       return { ok: true };
     }
-    // Pouvoir actif "Vol" : vole jusqu'à STEAL_AMOUNT à un adversaire,
-    // utilisable à tout moment, une seule fois par partie.
+
+    // Pouvoir "Vol" (instant) : uniquement à son tour, et seulement si la
+    // cible a plus de STEAL_MIN_TARGET_MONEY (on n'achève pas un joueur
+    // presque ruiné).
     useStealPower(playerId, targetId) {
       const player = this.players[playerId];
       const target = this.players[targetId];
       if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
       if (!target || target.bankrupt || targetId === playerId) return { ok: false, reason: "Cible invalide." };
       if (!player.power || player.power.id !== "theft") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
       if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+      if (target.money <= STEAL_MIN_TARGET_MONEY) {
+        return { ok: false, reason: `Cette cible doit avoir plus de ${STEAL_MIN_TARGET_MONEY} pour pouvoir être volée.` };
+      }
 
       player.power.used = true;
       const amount = Math.min(STEAL_AMOUNT, target.money);
@@ -430,6 +470,10 @@
               this.addLog(`${player.name} ne paie rien : ${tile.name} est hypothéquée.`);
               break;
             }
+            if (this._consumeTaxImmunityIfArmed(player)) {
+              this.addLog(`🛡️ ${player.name} déclenche son immunité fiscale : aucun loyer payé sur ${tile.name} !`);
+              break;
+            }
             let rent;
             if (tile.houses > 0) {
               rent = tile.rent * RENT_MULTIPLIERS_BY_HOUSES[tile.houses];
@@ -453,6 +497,10 @@
               this.addLog(`${player.name} ne paie rien : ${tile.name} est hypothéquée.`);
               break;
             }
+            if (this._consumeTaxImmunityIfArmed(player)) {
+              this.addLog(`🛡️ ${player.name} déclenche son immunité fiscale : aucun loyer payé sur ${tile.name} !`);
+              break;
+            }
             const owner = this.players[tile.owner];
             const count = this.board.filter((t) => t.type === "airport" && t.owner === tile.owner && !t.mortgaged).length;
             const rentTable = [25, 50, 100, 200];
@@ -472,6 +520,10 @@
               this.addLog(`${player.name} ne paie rien : ${tile.name} est hypothéquée.`);
               break;
             }
+            if (this._consumeTaxImmunityIfArmed(player)) {
+              this.addLog(`🛡️ ${player.name} déclenche son immunité fiscale : aucun loyer payé sur ${tile.name} !`);
+              break;
+            }
             const owner = this.players[tile.owner];
             const count = this.board.filter((t) => t.type === "utility" && t.owner === tile.owner && !t.mortgaged).length;
             const multiplier = count === 1 ? 4 : 10;
@@ -486,9 +538,8 @@
           break;
         }
         case "tax": {
-          if (player.power && player.power.id === "tax_immunity" && !player.power.used) {
-            player.power.used = true;
-            this.addLog(`🛡️ ${player.name} utilise son immunité fiscale : ${tile.name} ne lui coûte rien !`);
+          if (this._consumeTaxImmunityIfArmed(player)) {
+            this.addLog(`🛡️ ${player.name} déclenche son immunité fiscale : ${tile.name} ne lui coûte rien !`);
             break;
           }
           this.pay(player, null, tile.amount);
@@ -515,7 +566,8 @@
             this._startRandomWorldEvent();
             break;
           }
-          const card = CHANCE_CARDS[Math.floor(Math.random() * CHANCE_CARDS.length)];
+          const deck = this._availableChanceCards();
+          const card = deck[Math.floor(Math.random() * deck.length)];
           const label = tile.type === "special" ? "Carte Spéciale" : "Carte Destin";
           this.addLog(`${player.name} tire une ${label} : "${card.description}"`);
           card.effect(this, player);
@@ -787,6 +839,21 @@
     // la case soit traitée exactement comme si le joueur y était arrivé
     // par les dés. Renvoie true si une décision/enchère est maintenant en
     // attente (le tour ne doit alors pas être conclu tout de suite).
+    // Écarte du tirage les cartes qui nécessitent un type de case absent
+    // de CE plateau (ex: "aéroport le plus proche" si le plateau généré
+    // n'a aucun aéroport) — pertinent surtout avec un plateau généré dont
+    // la composition varie selon les réglages choisis.
+    _availableChanceCards() {
+      const available = CHANCE_CARDS.filter((card) => {
+        if (!card.requiresTileType) return true;
+        return this.board.some((t) => t.type === card.requiresTileType);
+      });
+      // Filet de sécurité : si jamais tout se retrouvait filtré (ne
+      // devrait jamais arriver, il reste toujours des cartes classiques),
+      // on retombe sur le paquet complet plutôt que de planter.
+      return available.length > 0 ? available : CHANCE_CARDS;
+    }
+
     // Cherche la prochaine case d'un type donné en avançant depuis une
     // position (utilisé par les cartes "fonce vers l'aéroport/la compagnie
     // le·la plus proche"). Fonctionne quelle que soit la disposition du
@@ -844,8 +911,9 @@
         let price = this.pendingDecision.price;
         const discounted = this.activeEvent && this.activeEvent.id === "price_reduction";
         let powerDiscountApplied = false;
-        if (player.power && player.power.id === "discount_purchase" && !player.power.used) {
+        if (player.power && player.power.id === "discount_purchase" && player.power.armed && !player.power.used) {
           player.power.used = true;
+          player.power.armed = false;
           price = Math.floor((price * (100 - DISCOUNT_PURCHASE_PERCENT)) / 100);
           powerDiscountApplied = true;
         }
@@ -860,6 +928,13 @@
         this._pendingDiceWasDouble = false;
         this._afterRollResolved(wasDouble);
       } else {
+        // Le pouvoir Négociateur est lié à CE prochain achat précisément :
+        // si le joueur refuse, le pouvoir s'arrête, sans deuxième chance.
+        if (player.power && player.power.id === "discount_purchase" && player.power.armed && !player.power.used) {
+          player.power.used = true;
+          player.power.armed = false;
+          this.addLog(`🏷️ ${player.name} refuse cet achat : son pouvoir Négociateur s'arrête sans effet.`);
+        }
         this.addLog(`${player.name} ne rachète pas ${tile.name} : mise aux enchères !`);
         const tileIndex = this.pendingDecision.tileIndex;
         this.pendingDecision = null;
