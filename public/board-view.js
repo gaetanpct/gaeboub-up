@@ -16,8 +16,7 @@
 // ============================================================
 
 (function () {
-  // Tons "pierres précieuses", identiques aux tokens --player-1..4 du CSS.
-  const PLAYER_COLORS = ["#c0455c", "#4a83c4", "#3f9e6e", "#9c5cc7"];
+  const PLAYER_COLORS = ["#ff5c72", "#4fd1ff", "#ffd76a", "#8effc1"];
 
   const GROUP_COLORS = {
     marron: "#8d5b4c",
@@ -52,48 +51,6 @@
     6: [1, 0, 1, 1, 0, 1, 1, 0, 1],
   };
 
-  // Les colonnes latérales (gauche/droite) sont plus larges que les
-  // colonnes du milieu — c'est ce qui permet aux cases de ces côtés
-  // d'afficher leur contenu horizontalement, sur une seule ligne bien
-  // lisible, au lieu d'être coincées dans une case carrée trop étroite
-  // (comme sur les plateaux façon richup.io).
-  const SIDE_COLUMN_FR = 2;
-  const MIDDLE_COLUMN_FR = 1;
-
-  function colFr(col, gridSize) {
-    return col === 0 || col === gridSize - 1 ? SIDE_COLUMN_FR : MIDDLE_COLUMN_FR;
-  }
-
-  function totalColFr(gridSize) {
-    return SIDE_COLUMN_FR * 2 + (gridSize - 2) * MIDDLE_COLUMN_FR;
-  }
-
-  // Position/largeur en % d'une colonne, en tenant compte de la largeur
-  // RÉELLE (variable) de chaque colonne — une simple division par
-  // gridSize serait fausse dès que les colonnes ne sont plus uniformes.
-  function colLeftPercent(col, gridSize) {
-    let sum = 0;
-    for (let i = 0; i < col; i++) sum += colFr(i, gridSize);
-    return (sum / totalColFr(gridSize)) * 100;
-  }
-
-  function colWidthPercent(col, gridSize) {
-    return (colFr(col, gridSize) / totalColFr(gridSize)) * 100;
-  }
-
-  // Chaîne CSS grid-template-columns avec colonnes latérales élargies.
-  function gridColumnTemplate(gridSize) {
-    const middleCount = gridSize - 2;
-    return `${SIDE_COLUMN_FR}fr repeat(${middleCount}, ${MIDDLE_COLUMN_FR}fr) ${SIDE_COLUMN_FR}fr`;
-  }
-
-  // Ratio largeur/hauteur du plateau (légèrement plus large que haut, à
-  // cause des colonnes latérales élargies) — utilisé pour que le calcul
-  // de taille (resizeBoardToFit) fasse tenir un RECTANGLE, pas un carré.
-  function boardAspectRatio(gridSize) {
-    return totalColFr(gridSize) / gridSize;
-  }
-
   // Convertit un index de case en position {row, col} sur une grille
   // carrée (0-indexée) dont la taille dépend du nombre TOTAL de cases du
   // plateau (40 par défaut, mais peut varier avec un plateau généré).
@@ -116,7 +73,7 @@
     const pos = tilePosition(index, boardLength);
     const gridSize = boardLength / 4 + 1;
     return {
-      xPct: colLeftPercent(pos.col, gridSize) + colWidthPercent(pos.col, gridSize) / 2,
+      xPct: ((pos.col + 0.5) / gridSize) * 100,
       yPct: ((pos.row + 0.5) / gridSize) * 100,
     };
   }
@@ -143,12 +100,8 @@
 
   function buildTileElement(tile, index, boardLength) {
     const pos = tilePosition(index, boardLength);
-    const gridSize = boardLength / 4 + 1;
-    const corner = isCorner(index, boardLength);
-    const isSideColumn = !corner && (pos.col === 0 || pos.col === gridSize - 1);
-
     const el = document.createElement("div");
-    el.className = "board-tile" + (corner ? " board-tile--corner" : "") + (isSideColumn ? " board-tile--side" : "");
+    el.className = "board-tile" + (isCorner(index, boardLength) ? " board-tile--corner" : "");
     el.style.gridRow = pos.row + 1;
     el.style.gridColumn = pos.col + 1;
     el.dataset.tileIndex = index;
@@ -174,16 +127,14 @@
   let tokenElements = {};
   let lastRenderedRollKey = null;
   let onTileClickCallback = null;
-  let currentAspectRatio = 1;
 
   function initBoard(boardData) {
     boardEl = document.getElementById("board-grid");
     if (!boardEl) return;
 
     const gridSize = boardData.length / 4 + 1;
-    boardEl.style.gridTemplateColumns = gridColumnTemplate(gridSize);
+    boardEl.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
     boardEl.style.gridTemplateRows = `repeat(${gridSize}, 1fr)`;
-    currentAspectRatio = boardAspectRatio(gridSize);
 
     boardEl.innerHTML = "";
     tokenElements = {};
@@ -204,23 +155,16 @@
       onTileClickCallback(Number(tileEl.dataset.tileIndex));
     });
 
-    // Zone centrale : titre + dés + indicateur de tour + journal compact.
-    // Volontairement sobre (pas de ville en 3D ni d'éléments décoratifs
-    // en trop) — juste l'essentiel, dans l'esprit d'une table de jeu.
+    // Zone centrale : titre + dés + indicateur de tour
     const center = document.createElement("div");
     center.className = "board-center";
     center.style.gridRow = `2 / ${gridSize}`;
     center.style.gridColumn = `2 / ${gridSize}`;
     center.innerHTML = `
       <div class="board-center__title">Gaeboub&#8209;up</div>
-      <div class="board-center__tagline">The High Stakes Game</div>
       <div id="dice-display" class="dice-row"></div>
       <div id="turn-indicator" class="turn-indicator"></div>
       <div id="pot-indicator" class="pot-indicator"></div>
-      <div class="board-center__log-wrap">
-        <div id="board-log-panel" class="board-log-panel"></div>
-        <button id="btn-open-full-log" class="btn-text-link" type="button">Tout voir</button>
-      </div>
     `;
     boardEl.appendChild(center);
 
@@ -230,62 +174,6 @@
     tokensLayerEl = document.createElement("div");
     tokensLayerEl.className = "tokens-layer";
     boardEl.appendChild(tokensLayerEl);
-
-    resizeBoardToFit();
-    attachResizeListener();
-  }
-
-  // Calcule la taille exacte du plateau en mesurant l'espace RÉELLEMENT
-  // disponible (largeur ET hauteur) autour de lui, plutôt que de deviner
-  // via des unités de fenêtre (vh/vw) qui ignorent la barre du haut, la
-  // sidebar, etc. C'est ce calcul qui garantit que le plateau tient
-  // toujours entièrement à l'écran, sans jamais dépasser en haut ou sur
-  // les côtés.
-  function resizeBoardToFit() {
-    if (!boardEl) return;
-    const container = boardEl.parentElement; // .board-container
-    if (!container) return;
-
-    // En layout mobile (colonne), le CSS gère déjà la taille via
-    // largeur/hauteur de fenêtre — on ne touche à rien pour ne pas entrer
-    // en conflit, la page peut de toute façon défiler sur mobile.
-    const layout = container.parentElement; // .game-layout
-    if (layout && window.getComputedStyle(layout).flexDirection === "column") {
-      boardEl.style.width = "";
-      boardEl.style.height = "";
-      return;
-    }
-
-    const availableWidth = container.clientWidth;
-    const availableHeight = container.clientHeight;
-    if (availableWidth <= 0 || availableHeight <= 0) return;
-
-    // Fait tenir un RECTANGLE (colonnes latérales élargies = plateau
-    // légèrement plus large que haut) dans l'espace disponible, en
-    // respectant toujours width/height = currentAspectRatio.
-    let width = availableWidth;
-    let height = width / currentAspectRatio;
-    if (height > availableHeight) {
-      height = availableHeight;
-      width = height * currentAspectRatio;
-    }
-    width = Math.max(200, Math.floor(width));
-    height = Math.max(Math.floor(200 / currentAspectRatio), Math.floor(height));
-    boardEl.style.width = `${width}px`;
-    boardEl.style.height = `${height}px`;
-  }
-
-  let resizeListenerAttached = false;
-  function attachResizeListener() {
-    if (resizeListenerAttached) return;
-    resizeListenerAttached = true;
-    const raf = window.requestAnimationFrame || ((cb) => setTimeout(cb, 16));
-    const caf = window.cancelAnimationFrame || ((id) => clearTimeout(id));
-    let pendingFrame = null;
-    window.addEventListener("resize", () => {
-      if (pendingFrame) caf(pendingFrame);
-      pendingFrame = raf(resizeBoardToFit);
-    });
   }
 
   // Aperçu statique du plateau (salon d'attente) : juste les cases et
@@ -294,9 +182,8 @@
   function renderPreview(containerEl, boardData) {
     if (!containerEl) return;
     const gridSize = boardData.length / 4 + 1;
-    containerEl.style.gridTemplateColumns = gridColumnTemplate(gridSize);
+    containerEl.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
     containerEl.style.gridTemplateRows = `repeat(${gridSize}, 1fr)`;
-    containerEl.style.aspectRatio = `${boardAspectRatio(gridSize)} / 1`;
     containerEl.innerHTML = "";
     boardData.forEach((tile, index) => {
       containerEl.appendChild(buildTileElement(tile, index, boardData.length));
@@ -354,7 +241,7 @@
       if (!token) {
         token = document.createElement("div");
         token.className = "token";
-        token.style.setProperty("--token-color", PLAYER_COLORS[player.id % PLAYER_COLORS.length]);
+        token.style.background = PLAYER_COLORS[player.id % PLAYER_COLORS.length];
         token.textContent = player.name.charAt(0).toUpperCase();
         token.title = player.name;
         tokensLayerEl.appendChild(token);
@@ -423,5 +310,5 @@
     return `<span class="tile-swatch tile-swatch--icon">${tileIcon(tile)}</span>`;
   }
 
-  window.ReachUpBoardView = { initBoard, updateBoard, renderPreview, onTileClick, tileSwatch, resizeBoardToFit, GROUP_COLORS, PLAYER_COLORS };
+  window.ReachUpBoardView = { initBoard, updateBoard, renderPreview, onTileClick, tileSwatch, GROUP_COLORS, PLAYER_COLORS };
 })();

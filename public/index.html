@@ -66,19 +66,22 @@
 
   <!-- Écran de jeu : mis en page à part pour tenir sur un seul écran, sans scroll -->
   <section id="screen-game" class="screen screen-game" hidden>
-    <div class="game-topbar">
-      <button id="btn-menu" class="btn-icon-ghost" title="Menu">☰</button>
-      <div id="active-event-banner" class="active-event-banner" hidden></div>
-      <button id="btn-toggle-sound" class="btn-icon-ghost" title="Activer/couper le son">🔊</button>
-    </div>
-
     <div class="game-layout">
       <div class="board-container">
+        <div class="board-top-row">
+          <div id="active-event-banner" class="active-event-banner" hidden></div>
+          <button id="btn-toggle-sound" class="btn-sound" title="Activer/couper le son">🔊</button>
+        </div>
         <div id="board-grid" class="board-grid"></div>
       </div>
 
       <aside class="game-sidebar">
         <div id="players-panel" class="players-panel players-panel--compact"></div>
+
+        <div id="active-rules-panel" class="active-rules-panel" hidden>
+          <span class="active-rules-label">Règles actives :</span>
+          <div id="active-rules-chips" class="active-rules-chips"></div>
+        </div>
 
         <div id="action-area" class="action-area"></div>
 
@@ -87,8 +90,12 @@
           <button id="btn-open-trade" class="btn-icon" title="Échanges">🤝</button>
           <button id="btn-open-power" class="btn-icon" title="Mon pouvoir" hidden>🔮</button>
           <button id="btn-open-loans" class="btn-icon" title="Prêts &amp; Assurance" hidden>💳</button>
-          <button id="btn-open-summary" class="btn-icon" title="Résumé">📊</button>
           <button id="btn-open-reference" class="btn-icon" title="Cartes &amp; Événements possibles">📋</button>
+        </div>
+
+        <div class="log-wrap log-wrap--compact">
+          <h2 class="log-title">Journal</h2>
+          <div id="log-panel" class="log-panel"></div>
         </div>
       </aside>
     </div>
@@ -163,48 +170,6 @@
       </div>
     </div>
 
-    <!-- Fenêtre Résumé -->
-    <div id="summary-modal" class="modal-overlay" hidden>
-      <div class="modal-box">
-        <div class="modal-header">
-          <h2>📊 Résumé de la partie</h2>
-          <button id="btn-close-summary" class="btn-close">✕</button>
-        </div>
-        <div id="summary-content" class="properties-list"></div>
-      </div>
-    </div>
-
-    <!-- Fenêtre journal complet -->
-    <div id="full-log-modal" class="modal-overlay" hidden>
-      <div class="modal-box">
-        <div class="modal-header">
-          <h2>Journal complet</h2>
-          <button id="btn-close-full-log" class="btn-close">✕</button>
-        </div>
-        <div id="full-log-content" class="log-panel log-panel--full"></div>
-      </div>
-    </div>
-
-    <!-- Menu (☰) : uniquement l'abandon de partie -->
-    <div id="menu-modal" class="modal-overlay" hidden>
-      <div class="modal-box modal-box--narrow">
-        <div class="modal-header">
-          <h2>Menu</h2>
-          <button id="btn-close-menu" class="btn-close">✕</button>
-        </div>
-        <div id="menu-content" class="properties-list">
-          <button id="btn-forfeit" class="btn-danger">🚪 Abandonner la partie</button>
-          <div id="forfeit-confirm" class="forfeit-confirm" hidden>
-            <p>Cette action est irréversible et met fin à ta participation. Confirmer ?</p>
-            <div class="forfeit-confirm__actions">
-              <button id="btn-forfeit-confirm" class="btn-danger">Oui, abandonner</button>
-              <button id="btn-forfeit-cancel">Annuler</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- Fenêtre de statistiques de fin de partie -->
     <div id="stats-modal" class="modal-overlay" hidden>
       <div class="modal-box modal-box--wide">
@@ -213,17 +178,6 @@
           <button id="btn-close-stats" class="btn-close">✕</button>
         </div>
         <div id="stats-content" class="properties-list"></div>
-      </div>
-    </div>
-
-    <!-- Notifications temporaires -->
-    <div id="toast-container" class="toast-container" aria-live="polite"></div>
-
-    <!-- Carte animée (Destin / Spéciale / Événement mondial) -->
-    <div id="card-reveal" class="card-reveal" hidden>
-      <div class="card-reveal__card">
-        <div id="card-reveal-title" class="card-reveal__title"></div>
-        <div id="card-reveal-text" class="card-reveal__text"></div>
       </div>
     </div>
   </section>
