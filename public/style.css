@@ -262,8 +262,38 @@ button:disabled {
 }
 
 .player-money {
+  position: relative;
   color: var(--gold-bright) !important;
   font-weight: 700;
+}
+
+.money-delta {
+  position: absolute;
+  left: calc(100% + 0.4em);
+  top: 50%;
+  font-size: 0.85em;
+  font-weight: 800;
+  padding: 0.05em 0.4em;
+  border-radius: 999px;
+  white-space: nowrap;
+  animation: money-delta-float 1.8s ease-out forwards;
+}
+
+.money-delta--positive {
+  background: rgba(111, 189, 143, 0.18);
+  color: var(--positive);
+}
+
+.money-delta--negative {
+  background: rgba(207, 107, 107, 0.18);
+  color: var(--negative);
+}
+
+@keyframes money-delta-float {
+  0% { opacity: 0; transform: translate(0, -50%) scale(0.85); }
+  15% { opacity: 1; transform: translate(0, -75%) scale(1); }
+  75% { opacity: 1; transform: translate(0, -95%) scale(1); }
+  100% { opacity: 0; transform: translate(0, -115%) scale(0.95); }
 }
 
 .player-card--current {
@@ -273,6 +303,10 @@ button:disabled {
 
 .player-card--bankrupt {
   opacity: 0.5;
+}
+
+.player-card--indebt {
+  box-shadow: 0 0 0 1px var(--negative), 0 0 14px rgba(207, 107, 107, 0.2);
 }
 
 .player-status {
@@ -441,7 +475,32 @@ button:disabled {
 }
 
 .board-tile--owned {
-  box-shadow: inset 0 0 0 2.5px var(--owner-color, transparent), inset 0 0 0 1px rgba(43, 32, 19, 0.3);
+  box-shadow: inset 0 0 0 4px var(--owner-color, transparent), inset 0 0 0 1px rgba(43, 32, 19, 0.3);
+}
+
+/* Petit fanion coloré dans le coin — bien plus repérable d'un coup d'œil
+   qu'une simple bordure, même à distance ou sur un petit écran. */
+.board-tile--owned::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30%;
+  height: 30%;
+  background: var(--owner-color, transparent);
+  clip-path: polygon(100% 0, 100% 100%, 0 0);
+  z-index: 1;
+  box-shadow: -1px 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.board-tile--side.board-tile--owned::after {
+  /* Sur les côtés gauche/droit, la bande de couleur est déjà à gauche :
+     le fanion se met plutôt en haut à droite du bloc icône/nom, sans
+     recouvrir le nom de la propriété. */
+  top: 0;
+  right: 0;
+  width: 22%;
+  height: 40%;
 }
 
 .board-tile__top-row {
@@ -603,6 +662,26 @@ button:disabled {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+.buildings-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.buildings-badge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 1.5cqw;
+  line-height: 1;
+  white-space: nowrap;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+}
+
+.buildings-badge:empty {
+  display: none;
 }
 
 .token {
@@ -1292,6 +1371,12 @@ body.is-game-screen .app {
   width: min(360px, 100%);
 }
 
+.menu-divider {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 0.8rem 0;
+}
+
 .btn-danger {
   background: transparent;
   border: 1px solid var(--negative);
@@ -1424,8 +1509,8 @@ body.is-game-screen .app {
 
 .board-log-panel {
   width: 100%;
-  max-height: 4.5em;
-  overflow: hidden;
+  max-height: 7.2em;
+  overflow-y: auto;
   font-size: 0.68rem;
   line-height: 1.35;
   text-align: left;

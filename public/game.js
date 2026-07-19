@@ -271,18 +271,6 @@ document.addEventListener("click", (event) => {
   }
 });
 
-const summaryModal = document.getElementById("summary-modal");
-const btnOpenSummary = document.getElementById("btn-open-summary");
-const btnCloseSummary = document.getElementById("btn-close-summary");
-btnOpenSummary.addEventListener("click", () => {
-  summaryModal.hidden = false;
-  renderSummaryModal();
-});
-btnCloseSummary.addEventListener("click", () => { summaryModal.hidden = true; });
-summaryModal.addEventListener("click", (event) => {
-  if (event.target === summaryModal) summaryModal.hidden = true;
-});
-
 const menuModal = document.getElementById("menu-modal");
 const btnMenu = document.getElementById("btn-menu");
 const btnCloseMenu = document.getElementById("btn-close-menu");
@@ -291,6 +279,7 @@ const forfeitConfirm = document.getElementById("forfeit-confirm");
 btnMenu.addEventListener("click", () => {
   forfeitConfirm.hidden = true;
   menuModal.hidden = false;
+  renderSummaryModal();
 });
 btnCloseMenu.addEventListener("click", () => { menuModal.hidden = true; });
 menuModal.addEventListener("click", (event) => {
@@ -393,6 +382,7 @@ socket.on("game:started", ({ state, socketToPlayerId, settings }) => {
   myPlayerId = socketToPlayerId[socket.id];
   latestGameSettings = settings || null;
   lastLogLength = state.log.length; // pas de notification rétroactive sur le journal déjà existant
+  lastKnownMoney = {}; // idem pour les indicateurs de variation d'argent
   showScreen("game");
   renderGame(state);
 });
@@ -451,6 +441,10 @@ function processNewLogLines(state) {
       showToast(line, playerId);
     } else if (line.includes("abandonne la partie")) {
       showToast(`🚪 ${line}`, playerId);
+    } else if (line.includes("est à découvert")) {
+      showToast(`⚠️ ${line}`, playerId);
+    } else if (line.includes("a rétabli sa situation financière")) {
+      showToast(`✅ ${line}`, playerId);
     }
   });
 }
@@ -564,7 +558,7 @@ function renderSummaryModal() {
 
   const chips = buildActiveRuleChips(state);
 
-  document.getElementById("summary-content").innerHTML = `
+  document.getElementById("menu-summary-content").innerHTML = `
     <p><strong>Tour</strong> ${state.turnNumber}${state.turnLimit ? ` / ${state.turnLimit}` : ""} — au tour de <strong>${state.gameOver ? "—" : current.name}</strong></p>
     <h3 class="trade-section-title">Classement (valeur totale)</h3>
     <ul class="reference-list">${rankingHtml}</ul>
@@ -588,7 +582,7 @@ function renderGame(state) {
   if (!powerModal.hidden) renderPowerModal();
   if (!loansModal.hidden) renderLoansModal();
   if (!statsModal.hidden) renderStatsModal();
-  if (!summaryModal.hidden) renderSummaryModal();
+  if (!menuModal.hidden) renderSummaryModal();
   checkIncomingOffers(state);
 
   const me = state.players.find((p) => p.id === myPlayerId);
@@ -649,6 +643,27 @@ function buildActiveRuleChips(state) {
   return chips.join("");
 }
 
+// Affiche brièvement un "+200" ou "-160" flottant près de l'argent d'un
+// joueur dès que celui-ci change — un suivi des transactions hyper clair,
+// sans avoir besoin d'un nouveau panneau : ça vient se poser exactement
+// là où on regarde déjà (le montant lui-même).
+let lastKnownMoney = {};
+function showMoneyDelta(playerId, currentMoney) {
+  const previous = lastKnownMoney[playerId];
+  lastKnownMoney[playerId] = currentMoney;
+  if (previous === undefined || previous === currentMoney) return;
+
+  const moneyEl = document.querySelector(`[data-money-for="${playerId}"]`);
+  if (!moneyEl) return;
+
+  const delta = currentMoney - previous;
+  const badge = document.createElement("span");
+  badge.className = `money-delta ${delta > 0 ? "money-delta--positive" : "money-delta--negative"}`;
+  badge.textContent = delta > 0 ? `+${delta}` : `${delta}`;
+  moneyEl.appendChild(badge);
+  setTimeout(() => badge.remove(), 1800);
+}
+
 function renderPlayers(state) {
   playersPanel.innerHTML = "";
 
@@ -658,6 +673,7 @@ function renderPlayers(state) {
 
     let statusLabel = "Actif";
     if (player.bankrupt) statusLabel = "En faillite";
+    else if (player.inDebt) statusLabel = "⚠️ À découvert";
     else if (player.inJail) statusLabel = "En prison";
 
     const isCurrent = !state.gameOver && state.currentPlayerIndex === player.id;
@@ -665,6 +681,7 @@ function renderPlayers(state) {
     const card = document.createElement("div");
     card.className = "player-card";
     if (player.bankrupt) card.classList.add("player-card--bankrupt");
+    if (player.inDebt) card.classList.add("player-card--indebt");
     if (isCurrent) card.classList.add("player-card--current");
     card.style.borderLeft = `4px solid ${ReachUpBoardView.PLAYER_COLORS[player.id % ReachUpBoardView.PLAYER_COLORS.length]}`;
 
@@ -678,13 +695,14 @@ function renderPlayers(state) {
 
     card.innerHTML = `
       <h3>${player.name}${player.id === myPlayerId ? " (toi)" : ""}</h3>
-      <p class="player-money">💰 ${player.money}</p>
+      <p class="player-money" data-money-for="${player.id}">💰 ${player.money}</p>
       <p>📍 ${ReachUpBoardView.tileSwatch(tile)} ${tile.name}</p>
       <p>🏷️ ${propertiesCount} propriété(s)</p>
       ${player.power ? `<p class="power-badge">${ReachUpPowers.findPower(player.power.id).icon} ${ReachUpPowers.findPower(player.power.id).name}${powerStatus}</p>` : ""}
       <p class="player-status">${statusLabel}</p>
     `;
     playersPanel.appendChild(card);
+    showMoneyDelta(player.id, player.money);
   });
 
   if (state.gameOver) {
@@ -700,12 +718,42 @@ function renderActionArea(state) {
   if (state.gameOver) {
     const box = document.createElement("div");
     box.className = "action-box";
-    box.innerHTML = `<button id="btn-reopen-stats" class="btn-primary">📊 Voir les statistiques</button>`;
+    box.innerHTML = `
+      <button id="btn-reopen-stats" class="btn-primary">📊 Voir les statistiques</button>
+      <button id="btn-return-menu">🏠 Retour au menu</button>
+    `;
     actionArea.appendChild(box);
     document.getElementById("btn-reopen-stats").addEventListener("click", () => {
       renderStatsModal();
       statsModal.hidden = false;
     });
+    document.getElementById("btn-return-menu").addEventListener("click", () => {
+      window.location.reload();
+    });
+    return;
+  }
+
+  // Cas -1 : un joueur est à découvert — la partie est en pause tant
+  // qu'il n'a pas vendu/hypothéqué/emprunté (ou qu'il ne lui reste plus
+  // aucune option, auquel cas la faillite est déclarée automatiquement).
+  const debtor = state.players.find((p) => p.inDebt);
+  if (debtor) {
+    const box = document.createElement("div");
+    box.className = "action-box";
+    if (debtor.id === myPlayerId) {
+      box.innerHTML = `
+        <p>⚠️ Tu es à découvert (<strong>${debtor.money}</strong>). Vends une maison, hypothèque une propriété, ou espère un prêt d'un adversaire avant que la partie ne continue.</p>
+        <button id="btn-debt-open-properties" class="btn-primary">🏠 Gérer mes propriétés</button>
+      `;
+      actionArea.appendChild(box);
+      document.getElementById("btn-debt-open-properties").addEventListener("click", () => {
+        propertiesModal.hidden = false;
+        renderPropertiesModal();
+      });
+    } else {
+      box.innerHTML = `<p>⏳ En attente que <strong>${debtor.name}</strong> règle sa situation financière...</p>`;
+      actionArea.appendChild(box);
+    }
     return;
   }
 
@@ -832,7 +880,7 @@ function classifyLogLine(line) {
 function renderLog(state) {
   const boardLogPanel = document.getElementById("board-log-panel");
   if (boardLogPanel) {
-    const recent = state.log.slice(-6);
+    const recent = state.log.slice(-10);
     boardLogPanel.innerHTML = recent
       .map((line) => `<div class="log-line log-line--${classifyLogLine(line)}">${line}</div>`)
       .join("");

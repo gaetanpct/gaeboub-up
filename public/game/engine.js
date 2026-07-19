@@ -111,6 +111,7 @@
         power: this.powersEnabled ? { id: randomPowerId(), used: false, armed: false } : null,
         insurance: null, // { planId, planName, turnsRemaining, coveragePercent }
         forcedAuctionsUsed: 0,
+        inDebt: false, // à découvert, doit vendre/hypothéquer/emprunter avant que la partie ne continue
         stats: {
           rentPaid: 0,
           rentReceived: 0,
@@ -147,6 +148,7 @@
       // État "pas à pas", utilisé par le mode interactif (Phase 3+)
       this.doublesStreak = 0;
       this.pendingDecision = null; // { type: "buy", tileIndex, playerId }
+      this._pendingTurnContinuation = null; // ce qu'il faudra reprendre une fois une dette réglée
       this._pendingDiceWasDouble = false;
       this._turnBannerLogged = false;
 
@@ -411,6 +413,7 @@
       const refund = isFree ? HOUSE_COST_BY_GROUP[tile.group] : check.refund;
       this.pay(null, player, refund);
       this.addLog(`${player.name} vend une maison sur ${tile.name} pour ${refund}${isFree ? " (Ventes gratuites !)" : ""}.`);
+      this._recheckDebtStatus(player);
       return { ok: true };
     }
 
@@ -436,6 +439,7 @@
       tile.mortgaged = true;
       this.pay(null, player, check.amount);
       this.addLog(`${player.name} hypothèque ${tile.name} et reçoit ${check.amount}.`);
+      this._recheckDebtStatus(player);
       return { ok: true };
     }
 
@@ -588,19 +592,67 @@
       }
     }
 
+    // Avant de déclarer la faillite, on regarde si le joueur a encore une
+    // carte à jouer : hypothéquer une propriété non hypothéquée (et sans
+    // maison dessus), ou vendre une maison. Un prêt d'un autre joueur
+    // reste toujours possible aussi, mais ça ne dépend pas de lui seul —
+    // on ne peut pas en garantir l'existence, donc on ne le compte pas
+    // comme une "option" ici (s'il en obtient un, sa dette baissera et sera
+    // réévaluée normalement).
+    _hasDebtResolutionOptions(player) {
+      const canMortgage = this.board.some(
+        (t) => t.owner === player.id && !t.mortgaged && ["property", "airport", "utility"].includes(t.type) && (t.type !== "property" || t.houses === 0)
+      );
+      if (canMortgage) return true;
+      return this.board.some((t) => t.owner === player.id && t.type === "property" && t.houses > 0);
+    }
+
     checkBankruptcy(player) {
-      if (player.money < 0 && !player.bankrupt) {
-        player.bankrupt = true;
-        // Ses propriétés redeviennent libres (pas d'enchère pour l'instant)
-        this.board.forEach((tile) => {
-          if (tile.owner === player.id) {
-            tile.owner = null;
-            if (tile.type === "property") tile.houses = 0;
-            if ("mortgaged" in tile) tile.mortgaged = false;
-          }
-        });
-        this.addLog(`💥 ${player.name} est en faillite et quitte la partie.`);
+      if (player.money >= 0 || player.bankrupt || player.inDebt) return;
+
+      if (this._hasDebtResolutionOptions(player)) {
+        player.inDebt = true;
+        this.addLog(
+          `⚠️ ${player.name} est à découvert (${player.money}) : il doit vendre une maison, hypothéquer une propriété, ou obtenir un prêt avant que la partie continue.`
+        );
+      } else {
+        this._finalizeBankruptcy(player);
       }
+    }
+
+    _finalizeBankruptcy(player) {
+      player.bankrupt = true;
+      player.inDebt = false;
+      // Ses propriétés redeviennent libres (pas d'enchère pour l'instant)
+      this.board.forEach((tile) => {
+        if (tile.owner === player.id) {
+          tile.owner = null;
+          if (tile.type === "property") tile.houses = 0;
+          if ("mortgaged" in tile) tile.mortgaged = false;
+        }
+      });
+      this.addLog(`💥 ${player.name} n'a plus aucune option et est en faillite : il quitte la partie.`);
+    }
+
+    // Appelé après toute action qui pourrait avoir renfloué un joueur à
+    // découvert (hypothèque, vente de maison, prêt accepté...). Si sa
+    // situation est rétablie OU s'il n'a vraiment plus aucune option, on
+    // reprend là où le tour avait été mis en pause.
+    _recheckDebtStatus(player) {
+      if (!player.inDebt) return;
+
+      if (player.money >= 0) {
+        player.inDebt = false;
+        this.addLog(`✅ ${player.name} a rétabli sa situation financière et la partie continue.`);
+      } else if (!this._hasDebtResolutionOptions(player)) {
+        this._finalizeBankruptcy(player);
+      } else {
+        return; // toujours à découvert, mais il lui reste des options : on attend encore
+      }
+
+      const resume = this._pendingTurnContinuation;
+      this._pendingTurnContinuation = null;
+      if (resume) resume();
     }
 
     checkVictory() {
@@ -621,6 +673,7 @@
       if (!player || player.bankrupt || this.gameOver) return { ok: false, reason: "Action impossible." };
 
       player.bankrupt = true;
+      player.inDebt = false;
       this.board.forEach((tile) => {
         if (tile.owner === player.id) {
           tile.owner = null;
@@ -630,6 +683,16 @@
       });
       this.addLog(`🚪 ${player.name} abandonne la partie.`);
       this.checkVictory();
+
+      // Si la partie était en pause en attendant que CE joueur règle une
+      // dette, l'abandon règle la question : on reprend là où on en était.
+      if (!this.gameOver && this._pendingTurnContinuation && this.currentPlayerIndex === playerId) {
+        const resume = this._pendingTurnContinuation;
+        this._pendingTurnContinuation = null;
+        resume();
+        return { ok: true };
+      }
+
       if (!this.gameOver && this.currentPlayerIndex === playerId) {
         this.nextPlayer();
       }
@@ -675,7 +738,19 @@
     }
 
     nextPlayer() {
+      const endingPlayer = this.players[this.currentPlayerIndex];
       this._tickPersonalTimers(this.currentPlayerIndex);
+      if (endingPlayer.inDebt) {
+        // Une échéance de prêt vient de mettre ce joueur à découvert : on
+        // met le passage au joueur suivant en pause jusqu'à ce qu'il ait
+        // réglé sa situation (ou soit déclaré en faillite).
+        this._pendingTurnContinuation = () => this._advanceToNextPlayer();
+        return;
+      }
+      this._advanceToNextPlayer();
+    }
+
+    _advanceToNextPlayer() {
       do {
         this.currentPlayerIndex =
           (this.currentPlayerIndex + this.turnDirection + this.players.length) % this.players.length;
@@ -743,11 +818,23 @@
     }
 
     // Ce qui se passe une fois qu'un lancer est totalement résolu
-    // (achat décidé ou pas de décision nécessaire) : faillite, victoire,
-    // puis "rejoue" (double) ou "tour suivant".
+    // (achat décidé ou pas de décision nécessaire) : faillite (ou mise à
+    // découvert), victoire, puis "rejoue" (double) ou "tour suivant".
     _afterRollResolved(isDouble) {
       const player = this.currentPlayer();
       this.checkBankruptcy(player);
+      if (player.inDebt) {
+        // Le tour est mis en pause : ce joueur doit d'abord régler sa
+        // situation (vendre, hypothéquer, emprunter) avant que la partie
+        // continue. On retient ce qu'il faudra reprendre une fois réglé.
+        this._pendingTurnContinuation = () => this._finishAfterRollResolved(isDouble);
+        return;
+      }
+      this._finishAfterRollResolved(isDouble);
+    }
+
+    _finishAfterRollResolved(isDouble) {
+      const player = this.currentPlayer();
       this.checkVictory();
       if (!this.gameOver) this.checkTurnLimit();
       if (this.gameOver) return;
@@ -759,13 +846,21 @@
       this.nextPlayer();
     }
 
+    _finishJailRoll(freed) {
+      this.checkVictory();
+      if (!this.gameOver) this.checkTurnLimit();
+      if (!this.gameOver && !freed) {
+        this.nextPlayer();
+      }
+    }
+
     // ---- API "pas à pas", pilotée depuis l'extérieur (serveur ou test) ----
 
     // Fait jouer UN lancer de dés au joueur courant. À utiliser à chaque
     // clic sur "Lancer les dés". Peut se terminer en attente d'une
     // décision d'achat (this.pendingDecision devient non-null).
     roll() {
-      if (this.gameOver || this.pendingDecision || this.pendingAuction) return;
+      if (this.gameOver || this.pendingDecision || this.pendingAuction || this._pendingTurnContinuation) return;
       const player = this.currentPlayer();
       if (player.bankrupt) {
         this.nextPlayer();
@@ -780,11 +875,11 @@
       if (player.inJail) {
         const freed = this._attemptJailExit(player);
         this.checkBankruptcy(player);
-        this.checkVictory();
-        if (!this.gameOver) this.checkTurnLimit();
-        if (!this.gameOver && !freed) {
-          this.nextPlayer();
+        if (player.inDebt) {
+          this._pendingTurnContinuation = () => this._finishJailRoll(freed);
+          return;
         }
+        this._finishJailRoll(freed);
         // Si freed === true, le joueur garde son tour : il doit rappeler
         // roll() pour effectuer son déplacement (comportement volontaire,
         // cf. explications de la Phase 3).
@@ -1210,6 +1305,8 @@
       from.stats.tradesCompleted += 1;
       to.stats.tradesCompleted += 1;
       this.addLog(`🤝 Échange conclu entre ${from.name} et ${to.name}${taxNote} !`);
+      this._recheckDebtStatus(from);
+      this._recheckDebtStatus(to);
       return { ok: true };
     }
 
@@ -1285,6 +1382,7 @@
       this.addLog(
         `💳 ${borrower.name} accepte le prêt de ${lender.name} : ${offer.principal} reçus maintenant, ${offer.totalOwed} à rembourser dans ${offer.duration} tours.`
       );
+      this._recheckDebtStatus(borrower);
       return { ok: true };
     }
 
@@ -1425,6 +1523,7 @@
           power: p.power ? { ...p.power } : null,
           insurance: p.insurance ? { ...p.insurance } : null,
           forcedAuctionsUsed: p.forcedAuctionsUsed,
+          inDebt: p.inDebt,
           stats: { ...p.stats },
         })),
         board: this.board.map((t) => ({
@@ -1452,7 +1551,34 @@
       if (this.gameOver) return;
       const startingIndex = this.currentPlayerIndex;
       do {
-        if (this.pendingAuction) {
+        if (this._pendingTurnContinuation) {
+          // Un joueur est à découvert : en mode automatique, on tente de
+          // le renflouer nous-même (vend les maisons d'abord, puis
+          // hypothèque), exactement ce qu'un joueur humain ferait via les
+          // boutons de la fenêtre "Mes propriétés".
+          const debtor = this.players.find((p) => p.inDebt);
+          let acted = false;
+          if (debtor) {
+            for (let i = 0; i < this.board.length && !acted; i++) {
+              if (this.canSellHouse(debtor.id, i).ok) {
+                this.sellHouse(debtor.id, i);
+                acted = true;
+              }
+            }
+            for (let i = 0; i < this.board.length && !acted; i++) {
+              if (this.canMortgage(debtor.id, i).ok) {
+                this.mortgage(debtor.id, i);
+                acted = true;
+              }
+            }
+          }
+          if (!acted) {
+            // Filet de sécurité : ne devrait jamais arriver (checkBankruptcy
+            // aurait dû finaliser la faillite si vraiment plus d'option),
+            // mais on évite à tout prix une boucle infinie.
+            break;
+          }
+        } else if (this.pendingAuction) {
           const tile = this.board[this.pendingAuction.tileIndex];
           if (this.pendingAuction.mode === "classic") {
             // Chacun mise ou passe à son tour jusqu'à ce qu'il n'en reste qu'un.

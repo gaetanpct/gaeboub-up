@@ -126,6 +126,42 @@
     return index === 0 || index === last || index === 2 * last || index === 3 * last;
   }
 
+  // Sur quel bord du plateau se trouve cette case (pour savoir de quel
+  // côté, vers le centre, pousser l'indicateur de maisons/hôtel) — null
+  // pour un coin (pas de construction possible dessus).
+  function edgeDirectionFor(index, boardLength) {
+    if (isCorner(index, boardLength)) return null;
+    const pos = tilePosition(index, boardLength);
+    const gridSize = boardLength / 4 + 1;
+    if (pos.row === 0) return "top";
+    if (pos.row === gridSize - 1) return "bottom";
+    if (pos.col === 0) return "left";
+    if (pos.col === gridSize - 1) return "right";
+    return null;
+  }
+
+  // Position (en %) de l'indicateur de construction d'une case : le
+  // centre de la case, décalé vers l'intérieur du plateau (là où le
+  // centre — dés, journal — se trouve), pour qu'il ne recouvre jamais le
+  // nom de la propriété tout en restant bien à côté d'elle.
+  const BUILDINGS_OFFSET_PCT = 6;
+  function buildingsPositionPercent(index, boardLength) {
+    const center = tileCenterPercent(index, boardLength);
+    const dir = edgeDirectionFor(index, boardLength);
+    switch (dir) {
+      case "top":
+        return { xPct: center.xPct, yPct: center.yPct + BUILDINGS_OFFSET_PCT };
+      case "bottom":
+        return { xPct: center.xPct, yPct: center.yPct - BUILDINGS_OFFSET_PCT };
+      case "left":
+        return { xPct: center.xPct + BUILDINGS_OFFSET_PCT, yPct: center.yPct };
+      case "right":
+        return { xPct: center.xPct - BUILDINGS_OFFSET_PCT, yPct: center.yPct };
+      default:
+        return center;
+    }
+  }
+
   function tileIcon(tile) {
     switch (tile.type) {
       case "go": return "🏁";
@@ -147,8 +183,19 @@
     const corner = isCorner(index, boardLength);
     const isSideColumn = !corner && (pos.col === 0 || pos.col === gridSize - 1);
 
+    // Sur quel bord du plateau se trouve cette case ? Ça déterminera de
+    // quel côté (vers le centre du plateau) pousser l'indicateur de
+    // maisons/hôtel, pour qu'il ne recouvre jamais le nom de la propriété.
+    let edgeClass = "";
+    if (!corner) {
+      if (pos.row === 0) edgeClass = " board-tile--edge-top";
+      else if (pos.row === gridSize - 1) edgeClass = " board-tile--edge-bottom";
+      else if (pos.col === 0) edgeClass = " board-tile--edge-left";
+      else if (pos.col === gridSize - 1) edgeClass = " board-tile--edge-right";
+    }
+
     const el = document.createElement("div");
-    el.className = "board-tile" + (corner ? " board-tile--corner" : "") + (isSideColumn ? " board-tile--side" : "");
+    el.className = "board-tile" + (corner ? " board-tile--corner" : "") + (isSideColumn ? " board-tile--side" : "") + edgeClass;
     el.style.gridRow = pos.row + 1;
     el.style.gridColumn = pos.col + 1;
     el.dataset.tileIndex = index;
@@ -158,11 +205,14 @@
       el.classList.add("board-tile--property");
     }
 
+    // L'indicateur de maisons/hôtel est un élément à part, positionné en
+    // dehors du carré de la case (vers l'intérieur du plateau) — comme sur
+    // un vrai plateau physique, plutôt que d'encombrer le nom de la
+    // propriété avec des icônes à l'intérieur.
     el.innerHTML = `
       <div class="board-tile__band"></div>
       <div class="board-tile__top-row">
         <span class="board-tile__icon">${tileIcon(tile)}</span>
-        <span class="board-tile__buildings" data-buildings-for="${index}"></span>
       </div>
       <div class="board-tile__name">${tile.short}</div>
     `;
@@ -171,6 +221,8 @@
 
   let boardEl = null;
   let tokensLayerEl = null;
+  let buildingsLayerEl = null;
+  let buildingElements = {};
   let tokenElements = {};
   let lastRenderedRollKey = null;
   let onTileClickCallback = null;
@@ -187,6 +239,7 @@
 
     boardEl.innerHTML = "";
     tokenElements = {};
+    buildingElements = {};
     lastRenderedRollKey = null;
 
     boardData.forEach((tile, index) => {
@@ -230,6 +283,27 @@
     tokensLayerEl = document.createElement("div");
     tokensLayerEl.className = "tokens-layer";
     boardEl.appendChild(tokensLayerEl);
+
+    // Calque des indicateurs de construction (maisons/hôtel/hypothèque) :
+    // un badge par case possédable, positionné EN DEHORS du carré de la
+    // case, vers l'intérieur du plateau — comme sur un vrai plateau
+    // physique — plutôt que d'encombrer le nom de la propriété avec des
+    // icônes à l'intérieur (et pour ne pas être coupé par le
+    // "overflow: hidden" de la case, nécessaire pour d'autres raisons).
+    buildingsLayerEl = document.createElement("div");
+    buildingsLayerEl.className = "buildings-layer";
+    boardData.forEach((tile, index) => {
+      if (!["property", "airport", "utility"].includes(tile.type)) return;
+      const pos = buildingsPositionPercent(index, boardData.length);
+      const badge = document.createElement("span");
+      badge.className = "buildings-badge";
+      badge.style.left = `${pos.xPct}%`;
+      badge.style.top = `${pos.yPct}%`;
+      badge.dataset.buildingsFor = index;
+      buildingsLayerEl.appendChild(badge);
+      buildingElements[index] = badge;
+    });
+    boardEl.appendChild(buildingsLayerEl);
 
     resizeBoardToFit();
     attachResizeListener();
@@ -328,7 +402,7 @@
         el.classList.remove("board-tile--owned");
       }
 
-      const buildingsSlot = el.querySelector(`[data-buildings-for="${index}"]`);
+      const buildingsSlot = buildingElements[index];
       if (buildingsSlot) {
         if (tile.mortgaged) {
           buildingsSlot.innerHTML = "🔒";
