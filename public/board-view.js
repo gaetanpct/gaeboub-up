@@ -269,6 +269,7 @@
       <div class="board-center__tagline">The High Stakes Game</div>
       <div id="dice-display" class="dice-row"></div>
       <div id="turn-indicator" class="turn-indicator"></div>
+      <div id="vacation-pot-badge" class="vacation-pot-badge" hidden></div>
       <div id="pot-indicator" class="pot-indicator"></div>
       <div class="board-center__log-wrap">
         <div id="board-log-panel" class="board-log-panel"></div>
@@ -469,16 +470,19 @@
         turnIndicator.textContent = isMe ? "À toi de jouer !" : `Tour de ${current.name}`;
       }
 
+      const vacationBadge = document.getElementById("vacation-pot-badge");
+      if (vacationBadge) {
+        if (state.vacationPot !== null && state.vacationPot !== undefined) {
+          vacationBadge.hidden = false;
+          vacationBadge.textContent = `🏖️ Cagnotte de Vacances : ${state.vacationPot}`;
+        } else {
+          vacationBadge.hidden = true;
+        }
+      }
+
       const potIndicator = document.getElementById("pot-indicator");
       if (potIndicator) {
-        const parts = [];
-        if (state.vacationPot !== null && state.vacationPot !== undefined) {
-          parts.push(`🏖️ Cagnotte : ${state.vacationPot}`);
-        }
-        if (state.turnLimit) {
-          parts.push(`⏱️ Tour ${state.turnNumber}/${state.turnLimit}`);
-        }
-        potIndicator.textContent = parts.join("  •  ");
+        potIndicator.textContent = state.turnLimit ? `⏱️ Tour ${state.turnNumber}/${state.turnLimit}` : "";
       }
     }
   }

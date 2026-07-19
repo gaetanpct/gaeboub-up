@@ -89,9 +89,9 @@
       this.loansEnabled = !!options.loansEnabled;
       this.insuranceEnabled = !!options.insuranceEnabled;
       this.insurancePrices = [
-        options.insurancePlan1Price !== undefined ? options.insurancePlan1Price : 60,
-        options.insurancePlan2Price !== undefined ? options.insurancePlan2Price : 100,
-        options.insurancePlan3Price !== undefined ? options.insurancePlan3Price : 150,
+        options.insurancePlan1Price !== undefined ? options.insurancePlan1Price : 150,
+        options.insurancePlan2Price !== undefined ? options.insurancePlan2Price : 350,
+        options.insurancePlan3Price !== undefined ? options.insurancePlan3Price : 600,
       ];
       this.loans = []; // prêts actifs (acceptés) : { id, lenderId, borrowerId, principal, interestRate, totalOwed, turnsRemaining }
       this.loanOffers = []; // propositions de prêt en attente de réponse
@@ -512,7 +512,7 @@
             }
             const owner = this.players[tile.owner];
             const count = this.board.filter((t) => t.type === "airport" && t.owner === tile.owner && !t.mortgaged).length;
-            const rentTable = [25, 50, 100, 200];
+            const rentTable = [25, 50, 100, 200, 300, 450];
             let rent = rentTable[Math.max(count - 1, 0)];
             rent = this._applyDoubleRentPower(owner, rent);
             this._payRentWithInsurance(player, owner, rent);
@@ -1488,7 +1488,7 @@
         insurancePrices: this.insurancePrices,
         forcedAuctionsPerGame: this.forcedAuctionsPerGame,
         rentMultipliersByHouses: RENT_MULTIPLIERS_BY_HOUSES,
-        airportRentTable: [25, 50, 100, 200],
+        airportRentTable: [25, 50, 100, 200, 300, 450],
         chanceCardDescriptions: CHANCE_CARDS.map((c) => c.description),
         // Enchère secrète : on ne révèle jamais les montants avant la fin.
         // Enchère classique : tout est public (comme à la criée en vrai).

@@ -14,9 +14,9 @@
 })(typeof window !== "undefined" ? window : globalThis, function () {
 
   const INSURANCE_PLANS = [
-    { id: 0, name: "Basique", premium: 60, coveragePercent: 25, duration: 8 },
-    { id: 1, name: "Standard", premium: 100, coveragePercent: 50, duration: 8 },
-    { id: 2, name: "Premium", premium: 150, coveragePercent: 75, duration: 8 },
+    { id: 0, name: "Basique", premium: 150, coveragePercent: 25, duration: 8 },
+    { id: 1, name: "Standard", premium: 350, coveragePercent: 50, duration: 8 },
+    { id: 2, name: "Premium", premium: 600, coveragePercent: 75, duration: 8 },
   ];
 
   return { INSURANCE_PLANS };
