@@ -29,12 +29,12 @@
   //   - mortgaged : hypothéquée ou non (property/airport/utility)
   const BOARD = [
     { type: "go", name: "Départ", short: "DÉPART" },
-    { type: "property", name: "Rue des Lilas", short: "Lilas", group: "marron", price: 60, rent: 2, owner: null, houses: 0, mortgaged: false },
+    { type: "property", name: "Rue Zaza", short: "Zaza", group: "marron", price: 60, rent: 2, owner: null, houses: 0, mortgaged: false },
     { type: "chance", name: "Carte Destin", short: "Destin" },
     { type: "property", name: "Rue des Tilleuls", short: "Tilleuls", group: "marron", price: 60, rent: 4, owner: null, houses: 0, mortgaged: false },
     { type: "tax", name: "Impôts", short: "Impôts", amount: 200 },
     { type: "airport", name: "Aéroport Nord", short: "Aéroport N", price: 200, owner: null, mortgaged: false },
-    { type: "property", name: "Rue de la Gare", short: "Gare", group: "cyan", price: 100, rent: 6, owner: null, houses: 0, mortgaged: false },
+    { type: "property", name: "Rue 67", short: "Rue 67", group: "cyan", price: 100, rent: 6, owner: null, houses: 0, mortgaged: false },
     { type: "chance", name: "Carte Destin", short: "Destin" },
     { type: "property", name: "Rue du Port", short: "Port", group: "cyan", price: 100, rent: 6, owner: null, houses: 0, mortgaged: false },
     { type: "property", name: "Rue des Docks", short: "Docks", group: "cyan", price: 120, rent: 8, owner: null, houses: 0, mortgaged: false },
@@ -200,6 +200,7 @@
     },
     {
       description: "Foncez vers l'aéroport le plus proche.",
+      requiresTileType: "airport",
       effect: (engine, player) => {
         const newIndex = engine._findNearestTileOfType(player.position, "airport");
         engine._landOnTile(player, newIndex);
@@ -207,6 +208,7 @@
     },
     {
       description: "Direction la compagnie la plus proche.",
+      requiresTileType: "utility",
       effect: (engine, player) => {
         const newIndex = engine._findNearestTileOfType(player.position, "utility");
         engine._landOnTile(player, newIndex);
