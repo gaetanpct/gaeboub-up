@@ -158,6 +158,7 @@
       // État "pas à pas", utilisé par le mode interactif (Phase 3+)
       this.doublesStreak = 0;
       this.pendingDecision = null; // { type: "buy", tileIndex, playerId }
+      this.lastJailEvent = null; // { playerId, fromIndex } — pour l'animation de transition avant la prison
       this.pendingMoveChoice = null; // { playerId, maxDistance, isDouble } — pouvoir Libre arrêt
       this.rentCollectorEffect = null; // { playerId, turnsRemaining } — pouvoir Collecteur
       this._pendingTurnContinuation = null; // ce qu'il faudra reprendre une fois une dette réglée
@@ -216,6 +217,12 @@
     }
 
     sendToJail(player) {
+      // Retient la case sur laquelle le joueur se trouvait juste avant
+      // d'être envoyé en prison (case "Aller en prison", carte Destin...)
+      // — utilisé uniquement côté client pour faire transiter le pion par
+      // cette case avant la prison, histoire qu'on comprenne d'où ça vient.
+      this.lastJailEvent = { playerId: player.id, fromIndex: player.position };
+
       // La case Prison est toujours au premier quart du plateau (comme sur
       // le plateau fixe), quelle que soit la taille réelle de celui-ci.
       player.position = this.board.length / 4;
@@ -1841,6 +1848,8 @@
           houseCost: t.type === "property" ? HOUSE_COST_BY_GROUP[t.group] : null,
         })),
         log: this.log.slice(-80),
+        logTotalCount: this.log.length,
+        lastJailEvent: this.lastJailEvent ? { ...this.lastJailEvent } : null,
       };
     }
 

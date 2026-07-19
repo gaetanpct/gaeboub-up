@@ -225,6 +225,7 @@
   let buildingElements = {};
   let tokenElements = {};
   let lastRenderedRollKey = null;
+  let lastRenderedJailEventKey = null;
   let onTileClickCallback = null;
   let currentAspectRatio = 1;
 
@@ -418,6 +419,17 @@
     });
 
     // 2. Pions : positions mises à jour en douceur (transition CSS)
+    //
+    // Cas particulier : un joueur qui vient d'être envoyé en prison (case
+    // "Aller en prison", carte Destin...) ne doit pas y apparaître d'un
+    // coup — le pion doit d'abord transiter par la case qui l'a envoyé là,
+    // pour qu'on comprenne immédiatement pourquoi, exactement comme s'il y
+    // était vraiment arrivé en jouant.
+    const jailEvent = state.lastJailEvent;
+    const jailEventKey = jailEvent ? `${jailEvent.playerId}-${jailEvent.fromIndex}-${state.logTotalCount}` : null;
+    const isNewJailEvent = !!jailEventKey && jailEventKey !== lastRenderedJailEventKey;
+    if (jailEventKey) lastRenderedJailEventKey = jailEventKey;
+
     state.players.forEach((player) => {
       let token = tokenElements[player.id];
 
@@ -441,8 +453,19 @@
 
       const center = tileCenterPercent(player.position, state.board.length);
       const offset = TOKEN_OFFSETS[player.id % TOKEN_OFFSETS.length];
-      token.style.left = `calc(${center.xPct}% + ${offset.dx}%)`;
-      token.style.top = `calc(${center.yPct}% + ${offset.dy}%)`;
+
+      if (isNewJailEvent && jailEvent.playerId === player.id) {
+        const fromCenter = tileCenterPercent(jailEvent.fromIndex, state.board.length);
+        token.style.left = `calc(${fromCenter.xPct}% + ${offset.dx}%)`;
+        token.style.top = `calc(${fromCenter.yPct}% + ${offset.dy}%)`;
+        setTimeout(() => {
+          token.style.left = `calc(${center.xPct}% + ${offset.dx}%)`;
+          token.style.top = `calc(${center.yPct}% + ${offset.dy}%)`;
+        }, 550);
+      } else {
+        token.style.left = `calc(${center.xPct}% + ${offset.dx}%)`;
+        token.style.top = `calc(${center.yPct}% + ${offset.dy}%)`;
+      }
     });
 
     // 3. Dés + indicateur de tour, au centre du plateau

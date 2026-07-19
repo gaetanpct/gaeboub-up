@@ -331,6 +331,36 @@ let statsAutoShown = false;
 
 let latestGameState = null;
 
+// À chaque mise à jour reçue (même venant d'un AUTRE joueur), les fenêtres
+// ouvertes sont entièrement reconstruites à partir de l'état — pratique
+// pour rester à jour, mais ça effaçait au passage tout ce qu'on était en
+// train de saisir (montant d'enchère, case cochée pour un échange...).
+// Ces deux fonctions capturent les valeurs juste avant de reconstruire, et
+// les remettent en place juste après, sans rien changer d'autre.
+function captureFormValues(container) {
+  const values = {};
+  if (!container) return values;
+  container.querySelectorAll("input, select, textarea").forEach((el) => {
+    const key = el.id || (el.type === "checkbox" || el.type === "radio" ? `${el.className}:${el.value}` : null);
+    if (!key) return;
+    values[key] = el.type === "checkbox" || el.type === "radio" ? el.checked : el.value;
+  });
+  return values;
+}
+
+function restoreFormValues(container, values) {
+  if (!container) return;
+  container.querySelectorAll("input, select, textarea").forEach((el) => {
+    const key = el.id || (el.type === "checkbox" || el.type === "radio" ? `${el.className}:${el.value}` : null);
+    if (!key || !(key in values)) return;
+    if (el.type === "checkbox" || el.type === "radio") {
+      el.checked = values[key];
+    } else {
+      el.value = values[key];
+    }
+  });
+}
+
 btnOpenProperties.addEventListener("click", () => {
   propertiesModal.hidden = false;
   renderPropertiesModal();
@@ -376,12 +406,12 @@ loansModal.addEventListener("click", (event) => {
 });
 
 let latestGameSettings = null;
-let lastLogLength = 0;
+let lastLogTotalCount = 0;
 
 socket.on("game:started", ({ state, socketToPlayerId, settings }) => {
   myPlayerId = socketToPlayerId[socket.id];
   latestGameSettings = settings || null;
-  lastLogLength = state.log.length; // pas de notification rétroactive sur le journal déjà existant
+  lastLogTotalCount = state.logTotalCount; // pas de notification rétroactive sur le journal déjà existant
   lastKnownMoney = {}; // idem pour les indicateurs de variation d'argent
   showScreen("game");
   renderGame(state);
@@ -399,9 +429,18 @@ socket.on("game:update", ({ state, settings }) => {
 // simples. Découplé du reste, donc n'importe quelle action future produit
 // une notification "gratuitement" si son log contient les bons mots, sans
 // avoir à toucher au moteur.
+//
+// IMPORTANT : state.log n'est qu'une FENÊTRE GLISSANTE des 80 dernières
+// lignes (pour ne pas alourdir chaque message réseau) — un simple suivi
+// par longueur de tableau se dérègle complètement dès que cette fenêtre
+// "glisse" (partie un peu longue). state.logTotalCount, lui, ne fait que
+// grandir et permet de savoir exactement combien de lignes ont été
+// ajoutées depuis la dernière fois, même dans ce cas.
 function processNewLogLines(state) {
-  const newLines = state.log.slice(lastLogLength);
-  lastLogLength = state.log.length;
+  const missedCount = state.logTotalCount - lastLogTotalCount;
+  lastLogTotalCount = state.logTotalCount;
+  if (missedCount <= 0) return;
+  const newLines = state.log.slice(-Math.min(missedCount, state.log.length));
 
   newLines.forEach((line) => {
     // --- Sons (inchangé) ---
@@ -714,7 +753,9 @@ function renderPlayers(state) {
 }
 
 function renderActionArea(state) {
+  const preserved = captureFormValues(actionArea);
   actionArea.innerHTML = "";
+  try {
   if (state.gameOver) {
     const box = document.createElement("div");
     box.className = "action-box";
@@ -895,6 +936,9 @@ function renderActionArea(state) {
   // Cas 3 : c'est le tour de quelqu'un d'autre
   const currentName = state.players[state.currentPlayerIndex].name;
   showWaitingBox(`En attente du tour de ${currentName}...`);
+  } finally {
+    restoreFormValues(actionArea, preserved);
+  }
 }
 
 function showWaitingBox(text) {
@@ -1368,6 +1412,7 @@ function renderStatsModal() {
 
 function renderLoansModal() {
   if (!latestGameState) return;
+  const preserved = captureFormValues(loansContent);
   document.getElementById("loans-error").textContent = "";
 
   let html = "";
@@ -1466,6 +1511,8 @@ function renderLoansModal() {
   buyInsuranceBtns.forEach((btn) => {
     btn.addEventListener("click", () => socket.emit("game:buyInsurance", { planId: Number(btn.dataset.buyInsurance) }));
   });
+
+  restoreFormValues(loansContent, preserved);
 }
 
 function renderIncomingLoanOffer(offer) {
@@ -1505,6 +1552,7 @@ function renderActiveLoan(loan) {
 
 function renderTradeModal() {
   if (!latestGameState) return;
+  const preserved = captureFormValues(tradeContent);
   document.getElementById("trade-error").textContent = "";
 
   const others = latestGameState.players.filter((p) => p.id !== myPlayerId && !p.bankrupt);
@@ -1593,6 +1641,7 @@ function renderTradeModal() {
   }
 
   propertiesModalWireTradeButtons();
+  restoreFormValues(tradeContent, preserved);
 }
 
 function propertiesModalWireTradeButtons() {

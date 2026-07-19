@@ -49,8 +49,8 @@
   // Si un groupe généré a besoin de plus de noms que la réserve n'en a,
   // on ajoute un numéro pour rester unique sans planter.
   const NAME_POOLS = {
-    marron: ["Rue Zaza", "Rue des Tilleuls", "Rue des Peupliers", "Rue des Bouleaux"],
-    cyan: ["Rue 67", "Rue du Port", "Rue des Docks", "Rue du Quai"],
+    marron: ["Rue Zaza", "Rue Grand Méchant Loup Ahouuu", "Rue Brrbrrrpatapim", "Rue Pupuce"],
+    cyan: ["Rue 67", "Rue Latina Chargée", "Rue Barmitsva", "Rue du Quai"],
     magenta: ["Avenue des Roses", "Avenue des Tulipes", "Avenue des Orchidées", "Avenue des Jasmins"],
     orange: ["Boulevard du Commerce", "Boulevard des Arts", "Boulevard de la Paix", "Boulevard du Marché"],
     rouge: ["Rue Victor Hugo", "Rue Voltaire", "Rue Molière", "Rue Balzac"],
@@ -63,8 +63,8 @@
   };
 
   const SHORT_NAME_OVERRIDES = {
-    "Rue Zaza": "Zaza", "Rue des Tilleuls": "Tilleuls", "Rue des Peupliers": "Peupliers", "Rue des Bouleaux": "Bouleaux",
-    "Rue 67": "Rue 67", "Rue du Port": "Port", "Rue des Docks": "Docks", "Rue du Quai": "Quai",
+    "Rue Zaza": "Zaza", "Rue Grand Méchant Loup Ahouuu": "Ahouuu !", "Rue Brrbrrrpatapim": "Patapim", "Rue Pupuce": "Pupuce",
+    "Rue 67": "Rue 67", "Rue Latina Chargée": "Latina Chargée", "Rue Barmitsva": "Barmitsva", "Rue du Quai": "Quai",
     "Avenue des Roses": "Roses", "Avenue des Tulipes": "Tulipes", "Avenue des Orchidées": "Orchidées", "Avenue des Jasmins": "Jasmins",
     "Boulevard du Commerce": "Commerce", "Boulevard des Arts": "Arts", "Boulevard de la Paix": "Paix", "Boulevard du Marché": "Marché",
     "Rue Victor Hugo": "V. Hugo", "Rue Voltaire": "Voltaire", "Rue Molière": "Molière", "Rue Balzac": "Balzac",
