@@ -66,6 +66,55 @@
       mode: "instant",
       description: "À ton tour, reçois 500 directement de la banque.",
     },
+    {
+      id: "auction_spy",
+      name: "Espion",
+      icon: "🕵️",
+      mode: "arm",
+      description: "Active-le à ton tour : lors de la prochaine enchère scellée, tu vois les mises déjà déposées par les autres avant de poser la tienne.",
+    },
+    {
+      id: "rent_collector",
+      name: "Collecteur",
+      icon: "💼",
+      mode: "instant",
+      description: "À ton tour : pendant 2 tours, tous les loyers dus par n'importe quel joueur (à n'importe quel propriétaire) te sont versés à toi à la place.",
+    },
+    {
+      id: "vacation_claim",
+      name: "Vacances à volonté",
+      icon: "🏖️",
+      mode: "instant",
+      description: "À ton tour, récupère immédiatement toute la cagnotte de Vacances, quelle que soit ta position.",
+    },
+    {
+      id: "debt_bailout",
+      name: "Renflouement",
+      icon: "🆘",
+      mode: "instant",
+      description: "Si tu es à découvert, la banque comble immédiatement ton négatif (utilisable uniquement dans cette situation).",
+    },
+    {
+      id: "free_landing",
+      name: "Libre arrêt",
+      icon: "🎯",
+      mode: "arm",
+      description: "Active-le à ton tour : à ton prochain lancer, tu choisis où t'arrêter parmi les cases accessibles par ton résultat (ex: tu fais 7, tu peux t'arrêter après 3 cases).",
+    },
+    {
+      id: "house_wrecker",
+      name: "Démolition",
+      icon: "💥",
+      mode: "instant",
+      description: "À ton tour, retire 4 maisons prises au hasard chez l'adversaire de ton choix (sans remboursement pour lui).",
+    },
+    {
+      id: "forced_swap",
+      name: "Échange forcé",
+      icon: "🔁",
+      mode: "instant",
+      description: "À ton tour, échange la propriété de deux cases de ton choix (ni l'une ni l'autre ne doit avoir de maison ou d'hôtel dessus).",
+    },
   ];
 
   const STEAL_AMOUNT = 300;
@@ -73,6 +122,8 @@
   const DOUBLE_RENT_CAP = 500;
   const DISCOUNT_PURCHASE_PERCENT = 95;
   const BANK_LOAN_AMOUNT = 500;
+  const RENT_COLLECTOR_DURATION_TURNS = 2;
+  const HOUSE_WRECKER_COUNT = 4;
 
   function findPower(id) {
     return POWERS.find((p) => p.id === id) || null;
@@ -89,6 +140,8 @@
     DOUBLE_RENT_CAP,
     DISCOUNT_PURCHASE_PERCENT,
     BANK_LOAN_AMOUNT,
+    RENT_COLLECTOR_DURATION_TURNS,
+    HOUSE_WRECKER_COUNT,
     findPower,
     randomPowerId,
   };

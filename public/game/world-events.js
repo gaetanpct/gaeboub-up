@@ -20,7 +20,7 @@
   }
 })(typeof window !== "undefined" ? window : globalThis, function () {
 
-  const EVENT_DURATION_TURNS = 6;
+  const EVENT_DURATION_TURNS = 6; // valeur par défaut, utilisée si un événement ne précise pas la sienne
 
   const WORLD_EVENTS = [
     {
@@ -58,6 +58,55 @@
       name: "Salaire doublé",
       icon: "💵",
       description: "Le salaire de la case Départ est doublé.",
+    },
+    {
+      id: "property_shuffle",
+      name: "Grand chelem",
+      icon: "🔀",
+      duration: 1,
+      description: "Toutes les propriétés changent de mains d'un coup (redistribuées en chaîne entre tous les joueurs).",
+    },
+    {
+      id: "wealth_tax_vacation",
+      name: "Fortune imposée",
+      icon: "🏦",
+      duration: 2,
+      description: "Tous les loyers dus au joueur le plus riche partent directement dans la cagnotte de Vacances.",
+    },
+    {
+      id: "rent_reduction",
+      name: "Récession",
+      icon: "📉",
+      duration: 3,
+      description: "Les loyers rapportent 25% de moins.",
+    },
+    {
+      id: "property_discount_30",
+      name: "Soldes immobilières",
+      icon: "💸",
+      duration: 2,
+      description: "Les propriétés coûtent 30% de moins à l'achat directe.",
+    },
+    {
+      id: "inflation",
+      name: "Inflation galopante",
+      icon: "📈",
+      duration: 3,
+      description: "Taxes et loyers augmentent de 25%.",
+    },
+    {
+      id: "wealth_redistribution",
+      name: "Redistribution",
+      icon: "🤲",
+      duration: 1,
+      description: "Le joueur le plus riche verse 10% de son argent au joueur le plus pauvre.",
+    },
+    {
+      id: "disabled_zones",
+      name: "Zones désactivées",
+      icon: "🚫",
+      duration: 5,
+      description: "5 cases tirées au sort n'ont plus aucun effet tant que ça dure.",
     },
   ];
 

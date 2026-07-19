@@ -89,7 +89,7 @@ function broadcastGame(room) {
 
   room.players.forEach((p) => {
     const playerId = room.socketToPlayerId[p.socketId];
-    const stateForPlayer = buildStateForPlayer(baseState, playerId, room.settings);
+    const stateForPlayer = buildStateForPlayer(baseState, playerId, room.settings, room.engine);
     io.to(p.socketId).emit("game:update", { state: stateForPlayer, settings: room.settings });
   });
 }
@@ -100,16 +100,38 @@ function broadcastGame(room) {
 // lui-même). Le destinataire ET les tiers ne voient que "un échange est
 // proposé", sans le contenu — sinon ce n'est plus vraiment secret : il
 // doit accepter ou refuser en se fiant à ce qui a été convenu ailleurs.
-function buildStateForPlayer(baseState, playerId, settings) {
-  if (!settings.secretTrades) return baseState;
+//
+// De même, une enchère scellée ne révèle jamais les montants dans l'état
+// public — SAUF pour un joueur qui a armé le pouvoir "Espion" : lui seul
+// reçoit ici les vraies mises déjà déposées par les autres.
+function buildStateForPlayer(baseState, playerId, settings, engine) {
+  let state = baseState;
 
-  return {
-    ...baseState,
-    tradeOffers: baseState.tradeOffers.map((trade) => {
-      if (trade.fromId === playerId) return trade;
-      return { id: trade.id, fromId: trade.fromId, toId: trade.toId, hidden: true };
-    }),
-  };
+  if (settings.secretTrades) {
+    state = {
+      ...state,
+      tradeOffers: state.tradeOffers.map((trade) => {
+        if (trade.fromId === playerId) return trade;
+        return { id: trade.id, fromId: trade.fromId, toId: trade.toId, hidden: true };
+      }),
+    };
+  }
+
+  if (state.pendingAuction && state.pendingAuction.mode === "secret" && engine && engine.pendingAuction) {
+    const me = engine.players[playerId];
+    const hasSpy = me && me.power && me.power.id === "auction_spy" && me.power.armed && !me.power.used;
+    if (hasSpy) {
+      state = {
+        ...state,
+        pendingAuction: {
+          ...state.pendingAuction,
+          bids: { ...engine.pendingAuction.bids },
+        },
+      };
+    }
+  }
+
+  return state;
 }
 
 io.on("connection", (socket) => {
@@ -460,6 +482,91 @@ io.on("connection", (socket) => {
     if (myPlayerId === undefined) return;
 
     const result = room.engine.useBankLoanPower(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  // ---- Nouveaux pouvoirs (Phase 19) ----
+  socket.on("game:useRentCollector", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.useRentCollectorPower(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:useVacationClaim", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.useVacationClaimPower(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:useDebtBailout", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.useDebtBailoutPower(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:useHouseWrecker", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.useHouseWreckerPower(myPlayerId, payload.targetId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:useForcedSwap", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.useForcedSwapPower(myPlayerId, payload.tileIndexA, payload.tileIndexB);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:chooseLandingDistance", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.chooseLandingDistance(myPlayerId, payload.distance);
     if (!result || !result.ok) {
       socket.emit("room:error", (result && result.reason) || "Action impossible.");
       return;

@@ -757,6 +757,37 @@ function renderActionArea(state) {
     return;
   }
 
+  // Cas -0.5 : le pouvoir "Libre arrêt" est en attente d'un choix.
+  if (state.pendingMoveChoice) {
+    const box = document.createElement("div");
+    box.className = "action-box";
+    if (state.pendingMoveChoice.playerId === myPlayerId) {
+      const me = state.players.find((p) => p.id === myPlayerId);
+      const options = Array.from({ length: state.pendingMoveChoice.maxDistance }, (_, i) => i + 1)
+        .map((dist) => {
+          const tileIndex = (me.position + dist) % state.board.length;
+          const tile = state.board[tileIndex];
+          return `<option value="${dist}">${dist} case(s) → ${tile.name}</option>`;
+        })
+        .join("");
+      box.innerHTML = `
+        <p>🎯 Choisis où t'arrêter (jusqu'à ${state.pendingMoveChoice.maxDistance} case(s)) :</p>
+        <select id="landing-distance-select">${options}</select>
+        <button id="btn-confirm-landing" class="btn-primary">Confirmer</button>
+      `;
+      actionArea.appendChild(box);
+      document.getElementById("btn-confirm-landing").addEventListener("click", () => {
+        const distance = Number(document.getElementById("landing-distance-select").value);
+        socket.emit("game:chooseLandingDistance", { distance });
+      });
+    } else {
+      const p = state.players.find((pl) => pl.id === state.pendingMoveChoice.playerId);
+      box.innerHTML = `<p>⏳ ${p ? p.name : "Un joueur"} choisit où s'arrêter...</p>`;
+      actionArea.appendChild(box);
+    }
+    return;
+  }
+
   // Cas 0 : une enchère est en cours (secrète ou classique)
   if (state.pendingAuction) {
     const tile = state.board[state.pendingAuction.tileIndex];
@@ -799,8 +830,16 @@ function renderActionArea(state) {
     if (state.pendingAuction.pendingPlayers.includes(myPlayerId)) {
       const box = document.createElement("div");
       box.className = "action-box";
+      const spyBids = state.pendingAuction.bids;
+      const spyReveal =
+        spyBids && Object.keys(spyBids).length > 0
+          ? `<p class="properties-empty">🕵️ Mises déjà déposées (pouvoir Espion) : ${Object.entries(spyBids)
+              .map(([pid, amount]) => `${state.players[pid].name} : ${amount}`)
+              .join(", ")}</p>`
+          : "";
       box.innerHTML = `
         <p>🔨 Enchère scellée sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
+        ${spyReveal}
         <input type="number" id="auction-bid-input" min="0" value="0" class="auction-input" />
         <button id="btn-submit-bid" class="btn-primary">Miser (0 = passer)</button>
       `;
@@ -1077,6 +1116,63 @@ function renderPowerModal() {
         <button id="btn-use-power" class="btn-primary">Recevoir ${ReachUpPowers.BANK_LOAN_AMOUNT} de la banque</button>
       </div>
     `;
+  } else if (power.id === "rent_collector") {
+    html += `
+      <div class="trade-form">
+        <button id="btn-use-power" class="btn-primary">Activer (loyers redirigés pendant ${ReachUpPowers.RENT_COLLECTOR_DURATION_TURNS} tours)</button>
+      </div>
+    `;
+  } else if (power.id === "vacation_claim") {
+    html += `
+      <div class="trade-form">
+        <button id="btn-use-power" class="btn-primary">Récupérer la cagnotte (${latestGameState.vacationPot || 0})</button>
+      </div>
+    `;
+  } else if (power.id === "debt_bailout") {
+    if (!me.inDebt) {
+      html += `<p class="properties-empty">Utilisable uniquement quand tu es à découvert.</p>`;
+    } else {
+      html += `
+        <div class="trade-form">
+          <button id="btn-use-power" class="btn-primary">Combler mon négatif (${me.money})</button>
+        </div>
+      `;
+    }
+  } else if (power.id === "house_wrecker") {
+    const others = latestGameState.players.filter((p) => p.id !== myPlayerId && !p.bankrupt);
+    if (others.length === 0) {
+      html += `<p class="properties-empty">Aucune cible disponible.</p>`;
+    } else {
+      const options = others.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+      html += `
+        <div class="trade-form">
+          <label>Démolir chez
+            <select id="power-wrecker-target">${options}</select>
+          </label>
+          <button id="btn-use-power" class="btn-primary">Utiliser le pouvoir</button>
+        </div>
+      `;
+    }
+  } else if (power.id === "forced_swap") {
+    const swappable = latestGameState.board
+      .map((t, i) => ({ t, i }))
+      .filter(({ t }) => ["property", "airport", "utility"].includes(t.type) && t.owner !== null && (t.houses || 0) === 0);
+    if (swappable.length < 2) {
+      html += `<p class="properties-empty">Pas assez de propriétés échangeables (sans maison) sur le plateau.</p>`;
+    } else {
+      const options = swappable.map(({ t, i }) => `<option value="${i}">${t.name} (${latestGameState.players[t.owner].name})</option>`).join("");
+      html += `
+        <div class="trade-form">
+          <label>Première case
+            <select id="power-swap-a">${options}</select>
+          </label>
+          <label>Seconde case
+            <select id="power-swap-b">${options}</select>
+          </label>
+          <button id="btn-use-power" class="btn-primary">Échanger</button>
+        </div>
+      `;
+    }
   }
 
   powerContent.innerHTML = html;
@@ -1100,6 +1196,33 @@ function renderPowerModal() {
   } else if (useBtn && power.id === "bank_loan") {
     useBtn.addEventListener("click", () => {
       socket.emit("game:useBankLoan");
+    });
+  } else if (useBtn && power.id === "rent_collector") {
+    useBtn.addEventListener("click", () => {
+      socket.emit("game:useRentCollector");
+    });
+  } else if (useBtn && power.id === "vacation_claim") {
+    useBtn.addEventListener("click", () => {
+      socket.emit("game:useVacationClaim");
+    });
+  } else if (useBtn && power.id === "debt_bailout") {
+    useBtn.addEventListener("click", () => {
+      socket.emit("game:useDebtBailout");
+    });
+  } else if (useBtn && power.id === "house_wrecker") {
+    useBtn.addEventListener("click", () => {
+      const targetId = Number(document.getElementById("power-wrecker-target").value);
+      socket.emit("game:useHouseWrecker", { targetId });
+    });
+  } else if (useBtn && power.id === "forced_swap") {
+    useBtn.addEventListener("click", () => {
+      const tileIndexA = Number(document.getElementById("power-swap-a").value);
+      const tileIndexB = Number(document.getElementById("power-swap-b").value);
+      if (tileIndexA === tileIndexB) {
+        document.getElementById("power-error").textContent = "Choisis deux cases différentes.";
+        return;
+      }
+      socket.emit("game:useForcedSwap", { tileIndexA, tileIndexB });
     });
   }
 }

@@ -17,12 +17,12 @@
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
     const { BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES } = require("./board.js");
-    const { POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId } = require("./powers.js");
+    const { POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId } = require("./powers.js");
     const { WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent } = require("./world-events.js");
     const { INSURANCE_PLANS } = require("./insurance-plans.js");
     module.exports = factory(
       BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
-      POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId,
+      POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId,
       WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
       INSURANCE_PLANS
     );
@@ -33,14 +33,14 @@
     const ins = root.ReachUpInsurance;
     root.ReachUpEngine = factory(
       b.BOARD, b.CHANCE_CARDS, b.HOUSE_COST_BY_GROUP, b.RENT_MULTIPLIERS_BY_HOUSES,
-      p.POWERS, p.STEAL_AMOUNT, p.STEAL_MIN_TARGET_MONEY, p.DOUBLE_RENT_CAP, p.DISCOUNT_PURCHASE_PERCENT, p.BANK_LOAN_AMOUNT, p.randomPowerId,
+      p.POWERS, p.STEAL_AMOUNT, p.STEAL_MIN_TARGET_MONEY, p.DOUBLE_RENT_CAP, p.DISCOUNT_PURCHASE_PERCENT, p.BANK_LOAN_AMOUNT, p.RENT_COLLECTOR_DURATION_TURNS, p.HOUSE_WRECKER_COUNT, p.randomPowerId,
       w.WORLD_EVENTS, w.EVENT_DURATION_TURNS, w.FREQUENCY_PROBABILITY, w.randomEvent,
       ins.INSURANCE_PLANS
     );
   }
 })(typeof window !== "undefined" ? window : globalThis, function (
   BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
-  POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, randomPowerId,
+  POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId,
   WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
   INSURANCE_PLANS
 ) {
@@ -48,6 +48,16 @@
   const SALARY = 200;
   const JAIL_FINE = 50;
   const MAX_JAIL_TURNS = 3;
+
+  // Mélange Fisher-Yates — ne modifie pas le tableau d'origine.
+  function shuffleArray(array) {
+    const copy = [...array];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  }
 
   class GameEngine {
     /**
@@ -148,6 +158,8 @@
       // État "pas à pas", utilisé par le mode interactif (Phase 3+)
       this.doublesStreak = 0;
       this.pendingDecision = null; // { type: "buy", tileIndex, playerId }
+      this.pendingMoveChoice = null; // { playerId, maxDistance, isDouble } — pouvoir Libre arrêt
+      this.rentCollectorEffect = null; // { playerId, turnsRemaining } — pouvoir Collecteur
       this._pendingTurnContinuation = null; // ce qu'il faudra reprendre une fois une dette réglée
       this._pendingDiceWasDouble = false;
       this._turnBannerLogged = false;
@@ -247,18 +259,60 @@
     // Paie un loyer en tenant compte d'une éventuelle assurance active chez
     // le payeur (Phase 8e) : il paie moins, le propriétaire touche quand
     // même le plein montant, la différence est prise en charge par la banque.
+    // Modifie le MONTANT d'un loyer selon l'événement mondial en cours
+    // (récession = -25%, inflation = +25%). Un seul événement actif à la
+    // fois, donc jamais de cumul à gérer.
+    _applyEventRentModifiers(rent) {
+      if (this.activeEvent && this.activeEvent.id === "rent_reduction") {
+        return Math.floor(rent * 0.75);
+      }
+      if (this.activeEvent && this.activeEvent.id === "inflation") {
+        return Math.ceil(rent * 1.25);
+      }
+      return rent;
+    }
+
     _payRentWithInsurance(payer, owner, rent) {
+      // Pouvoir "Collecteur" actif : le loyer va à son détenteur plutôt
+      // qu'au propriétaire réel (sauf s'il s'agit du même joueur).
+      let recipient = owner;
+      if (this.rentCollectorEffect && this.rentCollectorEffect.turnsRemaining > 0 && this.rentCollectorEffect.playerId !== owner.id) {
+        recipient = this.players[this.rentCollectorEffect.playerId];
+      }
+
+      // Événement "Fortune imposée" : si LE PROPRIÉTAIRE est le joueur le
+      // plus riche visé par l'événement, le loyer part dans la cagnotte de
+      // Vacances au lieu de lui — le payeur paie exactement pareil. Ne
+      // s'applique que si le Collecteur ne l'a pas déjà redirigé ailleurs.
+      const redirectToVacation =
+        recipient.id === owner.id &&
+        this.activeEvent &&
+        this.activeEvent.id === "wealth_tax_vacation" &&
+        this.activeEvent.targetPlayerId === owner.id;
+      if (redirectToVacation) recipient = null;
+
+      if (recipient !== owner && recipient !== null) {
+        this.addLog(`💼 Ce loyer part chez ${recipient.name} (pouvoir Collecteur actif) au lieu de ${owner.name}.`);
+      }
+
       if (payer.insurance && payer.insurance.turnsRemaining > 0) {
         const covered = Math.floor((rent * payer.insurance.coveragePercent) / 100);
         const payerShare = rent - covered;
-        this.pay(payer, owner, payerShare);
+        this.pay(payer, recipient, payerShare);
         if (covered > 0) {
-          this.pay(null, owner, covered);
+          this.pay(null, recipient, covered);
           this.addLog(`🛡️ L'assurance de ${payer.name} prend en charge ${covered} sur ce loyer.`);
         }
+        if (redirectToVacation) this._creditVacationPot(rent, owner);
         return;
       }
-      this.pay(payer, owner, rent);
+      this.pay(payer, recipient, rent);
+      if (redirectToVacation) this._creditVacationPot(rent, owner);
+    }
+
+    _creditVacationPot(amount, owner) {
+      this.vacationPot += amount;
+      this.addLog(`🏦 Le loyer dû à ${owner.name} part dans la cagnotte de Vacances (${this.vacationPot}) !`);
     }
 
     // Vrai pour toute activation de pouvoir désormais : uniquement
@@ -341,6 +395,121 @@
       const amount = Math.min(STEAL_AMOUNT, target.money);
       this.pay(target, player, amount);
       this.addLog(`🗝️ ${player.name} utilise son pouvoir de vol et dérobe ${amount} à ${target.name} !`);
+      return { ok: true };
+    }
+
+    // Pouvoir "Collecteur" : pendant 2 tours, tout loyer dû par
+    // n'importe quel joueur (à n'importe quel propriétaire) est versé au
+    // détenteur du pouvoir à la place. Décompté à chaque tour qui passe
+    // (this._tickRentCollector, appelé depuis _advanceToNextPlayer),
+    // indépendamment du joueur actif — pas seulement les tours du
+    // détenteur, pour rester cohérent avec "pendant 2 tours".
+    useRentCollectorPower(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!player.power || player.power.id !== "rent_collector") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+
+      player.power.used = true;
+      this.rentCollectorEffect = { playerId, turnsRemaining: RENT_COLLECTOR_DURATION_TURNS };
+      this.addLog(`💼 ${player.name} utilise son pouvoir : tous les loyers lui reviennent pendant ${RENT_COLLECTOR_DURATION_TURNS} tours !`);
+      return { ok: true };
+    }
+
+    // Pouvoir "Vacances à volonté" : récupère toute la cagnotte de
+    // Vacances immédiatement, quelle que soit la position du joueur.
+    useVacationClaimPower(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!player.power || player.power.id !== "vacation_claim") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+
+      player.power.used = true;
+      const amount = this.vacationPot;
+      this.pay(null, player, amount);
+      this.vacationPot = 0;
+      this.addLog(`🏖️ ${player.name} utilise son pouvoir et récupère toute la cagnotte de Vacances (${amount}) !`);
+      return { ok: true };
+    }
+
+    // Pouvoir "Renflouement" : la banque comble immédiatement le négatif
+    // du joueur — utilisable uniquement s'il est effectivement à découvert.
+    useDebtBailoutPower(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!player.power || player.power.id !== "debt_bailout") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+      if (!player.inDebt) return { ok: false, reason: "Ce pouvoir n'est utilisable que si tu es à découvert." };
+
+      player.power.used = true;
+      const amount = -player.money;
+      this.pay(null, player, amount);
+      this.addLog(`🆘 ${player.name} utilise son pouvoir : la banque comble son négatif (+${amount}) !`);
+      this._recheckDebtStatus(player);
+      return { ok: true };
+    }
+
+    // Pouvoir "Démolition" : retire 4 maisons prises au hasard chez
+    // l'adversaire choisi, sans remboursement pour lui.
+    useHouseWreckerPower(playerId, targetId) {
+      const player = this.players[playerId];
+      const target = this.players[targetId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!target || target.bankrupt || targetId === playerId) return { ok: false, reason: "Cible invalide." };
+      if (!player.power || player.power.id !== "house_wrecker") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+
+      const targetTiles = this.board.filter((t) => t.owner === targetId && t.type === "property" && t.houses > 0);
+      if (targetTiles.length === 0) {
+        return { ok: false, reason: "Cette cible n'a aucune maison à démolir." };
+      }
+
+      player.power.used = true;
+      let removed = 0;
+      for (let i = 0; i < HOUSE_WRECKER_COUNT; i++) {
+        const withHouses = this.board.filter((t) => t.owner === targetId && t.type === "property" && t.houses > 0);
+        if (withHouses.length === 0) break;
+        const pick = withHouses[Math.floor(Math.random() * withHouses.length)];
+        pick.houses -= 1;
+        removed += 1;
+      }
+      this.addLog(`💥 ${player.name} utilise son pouvoir et démolit ${removed} maison(s) chez ${target.name} !`);
+      return { ok: true };
+    }
+
+    // Pouvoir "Échange forcé" : échange la propriété de deux cases (ni
+    // l'une ni l'autre ne doit avoir de maison/hôtel), quels que soient
+    // leurs propriétaires respectifs.
+    useForcedSwapPower(playerId, tileIndexA, tileIndexB) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!player.power || player.power.id !== "forced_swap") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.power.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+
+      const tileA = this.board[tileIndexA];
+      const tileB = this.board[tileIndexB];
+      const ownableTypes = ["property", "airport", "utility"];
+      if (!tileA || !tileB || tileIndexA === tileIndexB) return { ok: false, reason: "Cases invalides." };
+      if (!ownableTypes.includes(tileA.type) || !ownableTypes.includes(tileB.type)) {
+        return { ok: false, reason: "Les deux cases doivent être des propriétés/gares/compagnies." };
+      }
+      if (tileA.owner === null || tileB.owner === null) return { ok: false, reason: "Les deux cases doivent être possédées." };
+      if ((tileA.houses || 0) > 0 || (tileB.houses || 0) > 0) {
+        return { ok: false, reason: "Impossible : au moins une des deux cases a des maisons ou un hôtel." };
+      }
+
+      player.power.used = true;
+      const ownerAName = this.players[tileA.owner].name;
+      const ownerBName = this.players[tileB.owner].name;
+      const temp = tileA.owner;
+      tileA.owner = tileB.owner;
+      tileB.owner = temp;
+      this.addLog(`🔁 ${player.name} utilise son pouvoir et échange ${tileA.name} (${ownerAName}) contre ${tileB.name} (${ownerBName}) !`);
       return { ok: true };
     }
 
@@ -472,6 +641,13 @@
     // (loyer, taxe, carte destin, prison...). L'achat d'une case libre
     // est géré séparément par roll()/decide(), pas ici.
     resolveTile(player, tile, diceSum) {
+      if (this.activeEvent && this.activeEvent.id === "disabled_zones" && this.activeEvent.disabledTiles) {
+        const tileIndex = this.board.indexOf(tile);
+        if (this.activeEvent.disabledTiles.includes(tileIndex)) {
+          this.addLog(`🚫 ${tile.name} est désactivée le temps de l'événement : rien ne se passe.`);
+          return;
+        }
+      }
       switch (tile.type) {
         case "property": {
           if (tile.owner !== player.id) {
@@ -490,6 +666,7 @@
               rent = this.ownsFullSet(tile.owner, tile.group) ? tile.rent * 2 : tile.rent;
             }
             const owner = this.players[tile.owner];
+            rent = this._applyEventRentModifiers(rent);
             rent = this._applyDoubleRentPower(owner, rent);
             this._payRentWithInsurance(player, owner, rent);
             player.stats.rentPaid += rent;
@@ -514,6 +691,7 @@
             const count = this.board.filter((t) => t.type === "airport" && t.owner === tile.owner && !t.mortgaged).length;
             const rentTable = [25, 50, 100, 200, 300, 450];
             let rent = rentTable[Math.max(count - 1, 0)];
+            rent = this._applyEventRentModifiers(rent);
             rent = this._applyDoubleRentPower(owner, rent);
             this._payRentWithInsurance(player, owner, rent);
             player.stats.rentPaid += rent;
@@ -537,6 +715,7 @@
             const count = this.board.filter((t) => t.type === "utility" && t.owner === tile.owner && !t.mortgaged).length;
             const multiplier = count === 1 ? 4 : 10;
             let rent = diceSum * multiplier;
+            rent = this._applyEventRentModifiers(rent);
             rent = this._applyDoubleRentPower(owner, rent);
             this._payRentWithInsurance(player, owner, rent);
             player.stats.rentPaid += rent;
@@ -551,13 +730,14 @@
             this.addLog(`🛡️ ${player.name} déclenche son immunité fiscale : ${tile.name} ne lui coûte rien !`);
             break;
           }
-          this.pay(player, null, tile.amount);
-          player.stats.taxesPaid += tile.amount;
+          const amount = this.activeEvent && this.activeEvent.id === "inflation" ? Math.ceil(tile.amount * 1.25) : tile.amount;
+          this.pay(player, null, amount);
+          player.stats.taxesPaid += amount;
           if (this.vacationPotEnabled) {
-            this.vacationPot += tile.amount;
-            this.addLog(`${player.name} paie ${tile.amount} de taxe (${tile.name}) — cagnotte de Vacances : ${this.vacationPot}.`);
+            this.vacationPot += amount;
+            this.addLog(`${player.name} paie ${amount} de taxe (${tile.name}) — cagnotte de Vacances : ${this.vacationPot}.`);
           } else {
-            this.addLog(`${player.name} paie ${tile.amount} de taxe (${tile.name}).`);
+            this.addLog(`${player.name} paie ${amount} de taxe (${tile.name}).`);
           }
           break;
         }
@@ -759,15 +939,86 @@
       this.turnNumber += 1;
       this._turnBannerLogged = false;
 
+      if (this.rentCollectorEffect) {
+        this.rentCollectorEffect.turnsRemaining -= 1;
+        if (this.rentCollectorEffect.turnsRemaining <= 0) {
+          this.addLog(`💼 Le pouvoir Collecteur de ${this.players[this.rentCollectorEffect.playerId].name} est terminé.`);
+          this.rentCollectorEffect = null;
+        }
+      }
+
       this._tickWorldEvent();
     }
 
     // ---- Événements mondiaux temporaires — Phase 8d ----
     _startRandomWorldEvent() {
       const event = randomEvent();
-      this.activeEvent = { id: event.id, turnsRemaining: EVENT_DURATION_TURNS };
-      if (event.id === "rank_reversal") this.turnDirection = -1;
-      this.addLog(`${event.icon} Événement mondial : "${event.name}" ! ${event.description} (${EVENT_DURATION_TURNS} tours)`);
+      const duration = event.duration || EVENT_DURATION_TURNS;
+      this.activeEvent = { id: event.id, turnsRemaining: duration };
+      this._setupWorldEvent(event);
+      this.addLog(`${event.icon} Événement mondial : "${event.name}" ! ${event.description} (${duration} tours)`);
+    }
+
+    // Mise en place ponctuelle d'un événement qui a besoin d'un effet
+    // immédiat et/ou d'un état particulier à retenir pendant sa durée.
+    _setupWorldEvent(event) {
+      if (event.id === "rank_reversal") {
+        this.turnDirection = -1;
+      } else if (event.id === "property_shuffle") {
+        const activeIds = this.activePlayers().map((p) => p.id);
+        if (activeIds.length >= 2) {
+          const shuffled = shuffleArray([...activeIds]);
+          const mapping = {};
+          shuffled.forEach((id, i) => {
+            mapping[id] = shuffled[(i + 1) % shuffled.length];
+          });
+          this.board.forEach((tile) => {
+            if (tile.owner !== null && mapping[tile.owner] !== undefined) {
+              tile.owner = mapping[tile.owner];
+            }
+          });
+          this.addLog(`🔀 Toutes les propriétés changent de mains !`);
+        }
+      } else if (event.id === "wealth_tax_vacation") {
+        const richest = this._richestPlayer();
+        if (richest) {
+          this.activeEvent.targetPlayerId = richest.id;
+          this.addLog(`🏦 Les loyers dus à ${richest.name} (le plus riche) partiront dans la cagnotte de Vacances.`);
+        }
+      } else if (event.id === "wealth_redistribution") {
+        const richest = this._richestPlayer();
+        const poorest = this._poorestPlayer();
+        if (richest && poorest && richest.id !== poorest.id) {
+          const amount = Math.floor(richest.money * 0.1);
+          if (amount > 0) {
+            this.pay(richest, poorest, amount);
+            this.addLog(`🤲 ${richest.name} verse ${amount} (10% de sa fortune) à ${poorest.name}.`);
+          }
+        }
+      } else if (event.id === "disabled_zones") {
+        const eligible = this.board
+          .map((t, i) => i)
+          .filter((i) => !["go", "jail", "vacation", "go-to-jail"].includes(this.board[i].type));
+        const picked = shuffleArray(eligible).slice(0, 5);
+        this.activeEvent.disabledTiles = picked;
+        const names = picked.map((i) => this.board[i].name).join(", ");
+        this.addLog(`🚫 Cases désactivées le temps de l'événement : ${names}.`);
+      }
+    }
+
+    // Joueur actif avec la plus grande / plus petite valeur totale
+    // (argent + propriétés + constructions) — utilisé par plusieurs
+    // événements mondiaux.
+    _richestPlayer() {
+      const active = this.activePlayers();
+      if (active.length === 0) return null;
+      return active.reduce((best, p) => (this._computeNetWorth(p) > this._computeNetWorth(best) ? p : best), active[0]);
+    }
+
+    _poorestPlayer() {
+      const active = this.activePlayers();
+      if (active.length === 0) return null;
+      return active.reduce((worst, p) => (this._computeNetWorth(p) < this._computeNetWorth(worst) ? p : worst), active[0]);
     }
 
     _tickWorldEvent() {
@@ -860,7 +1111,7 @@
     // clic sur "Lancer les dés". Peut se terminer en attente d'une
     // décision d'achat (this.pendingDecision devient non-null).
     roll() {
-      if (this.gameOver || this.pendingDecision || this.pendingAuction || this._pendingTurnContinuation) return;
+      if (this.gameOver || this.pendingDecision || this.pendingAuction || this.pendingMoveChoice || this._pendingTurnContinuation) return;
       const player = this.currentPlayer();
       if (player.bankrupt) {
         this.nextPlayer();
@@ -902,11 +1153,26 @@
         return;
       }
 
+      if (player.power && player.power.id === "free_landing" && player.power.armed && !player.power.used) {
+        player.power.used = true;
+        player.power.armed = false;
+        this.pendingMoveChoice = { playerId: player.id, maxDistance: sum, isDouble };
+        this.addLog(`🎯 ${player.name} utilise son pouvoir Libre arrêt : il choisit où s'arrêter (jusqu'à ${sum} case(s)).`);
+        return;
+      }
+
       const newPosition = (player.position + sum) % this.board.length;
       this.moveTo(player, newPosition, true);
       const tile = this.board[player.position];
       this.addLog(`${player.name} arrive sur "${tile.name}".`);
+      this._resolveLandedTile(player, tile, isDouble, sum);
+    }
 
+    // Ce qui se passe une fois qu'un joueur vient d'atterrir sur une case
+    // (via un lancer normal ou le pouvoir "Libre arrêt") : proposition
+    // d'achat / enchère si la case est libre et achetable, sinon
+    // résolution normale de la case (loyer, taxe, carte...).
+    _resolveLandedTile(player, tile, isDouble, diceSumForRent) {
       const ownableTypes = ["property", "airport", "utility"];
       if (ownableTypes.includes(tile.type) && tile.owner === null) {
         const effectivePrice = this._effectivePrice(tile.price);
@@ -922,7 +1188,7 @@
       }
 
       this._pendingDiceWasDouble = isDouble;
-      this.resolveTile(player, tile, sum);
+      this.resolveTile(player, tile, diceSumForRent);
       // Une carte Destin/Spéciale tirée ici a pu elle-même déplacer le
       // joueur vers une case achetable (ex: "avance de 3 cases") et donc
       // mettre une décision ou une enchère en attente : dans ce cas, on
@@ -930,6 +1196,28 @@
       if (!this.pendingDecision && !this.pendingAuction) {
         this._afterRollResolved(isDouble);
       }
+    }
+
+    // Pouvoir "Libre arrêt" : le joueur choisit lui-même où s'arrêter,
+    // n'importe où entre 1 et le résultat de son lancer.
+    chooseLandingDistance(playerId, distance) {
+      if (!this.pendingMoveChoice || this.pendingMoveChoice.playerId !== playerId) {
+        return { ok: false, reason: "Aucun choix d'arrêt en attente." };
+      }
+      const { maxDistance, isDouble } = this.pendingMoveChoice;
+      const dist = Math.floor(Number(distance));
+      if (!Number.isFinite(dist) || dist < 1 || dist > maxDistance) {
+        return { ok: false, reason: `Choisis une distance entre 1 et ${maxDistance}.` };
+      }
+
+      this.pendingMoveChoice = null;
+      const player = this.players[playerId];
+      const newPosition = (player.position + dist) % this.board.length;
+      this.moveTo(player, newPosition, true);
+      const tile = this.board[player.position];
+      this.addLog(`${player.name} arrive sur "${tile.name}" (arrêt choisi après ${dist} case(s) sur ${maxDistance}).`);
+      this._resolveLandedTile(player, tile, isDouble, dist);
+      return { ok: true };
     }
 
     // Utilisé par certaines cartes Destin/Spéciales qui déplacent le
@@ -1001,6 +1289,9 @@
     _effectivePrice(price) {
       if (this.activeEvent && this.activeEvent.id === "price_reduction") {
         return Math.floor(price * 0.75);
+      }
+      if (this.activeEvent && this.activeEvent.id === "property_discount_30") {
+        return Math.floor(price * 0.7);
       }
       return price;
     }
@@ -1129,6 +1420,15 @@
     _resolveSecretAuction() {
       const auction = this.pendingAuction;
       const tile = this.board[auction.tileIndex];
+
+      // Consomme le pouvoir "Espion" de quiconque l'avait armé pour cette
+      // enchère précise (qu'il en ait tiré parti ou non).
+      this.players.forEach((p) => {
+        if (p.power && p.power.id === "auction_spy" && p.power.armed && !p.power.used) {
+          p.power.used = true;
+          p.power.armed = false;
+        }
+      });
 
       let bestId = null;
       let bestBid = -1;
@@ -1480,7 +1780,7 @@
         gameOver: this.gameOver,
         winner: this.winner ? { id: this.winner.id, name: this.winner.name } : null,
         lastRoll: this.lastRoll,
-        vacationPot: this.vacationPotEnabled ? this.vacationPot : null,
+        vacationPot: this.vacationPotEnabled || this.vacationPot > 0 ? this.vacationPot : null,
         turnLimit: this.turnLimit,
         activeEvent: this.activeEvent ? { ...this.activeEvent } : null,
         loansEnabled: this.loansEnabled,
@@ -1508,6 +1808,8 @@
                 pendingPlayers: [...this.pendingAuction.pendingPlayers],
               }
           : null,
+        pendingMoveChoice: this.pendingMoveChoice ? { ...this.pendingMoveChoice } : null,
+        rentCollectorEffect: this.rentCollectorEffect ? { ...this.rentCollectorEffect } : null,
         tradeOffers: this.tradeOffers.map((t) => ({ ...t })),
         loans: this.loans.map((l) => ({ ...l })),
         loanOffers: this.loanOffers.map((o) => ({ ...o })),
