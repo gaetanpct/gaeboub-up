@@ -40,6 +40,7 @@
       tradeFairnessTolerance: 0.45, // écart de valeur toléré pour accepter un échange
       proactiveTradeChance: 0.15, // probabilité de tenter de proposer un échange par tour
       usePowersProactively: 0.4,  // probabilité d'utiliser un pouvoir instantané dès qu'il a de la valeur
+      decisionJitter: 0.30,       // variation aléatoire volontaire (évite d'être 100% prévisible/calculable de l'extérieur)
       thinkTimeSimpleMs: [350, 600],
       thinkTimeComplexMs: [500, 900],
     },
@@ -53,6 +54,7 @@
       tradeFairnessTolerance: 0.25,
       proactiveTradeChance: 0.3,
       usePowersProactively: 0.65,
+      decisionJitter: 0.25,
       thinkTimeSimpleMs: [300, 550],
       thinkTimeComplexMs: [600, 1100],
     },
@@ -66,6 +68,7 @@
       tradeFairnessTolerance: 0.14,
       proactiveTradeChance: 0.45,
       usePowersProactively: 0.85,
+      decisionJitter: 0.22,
       thinkTimeSimpleMs: [250, 450],
       thinkTimeComplexMs: [650, 1300],
     },
@@ -79,6 +82,12 @@
       tradeFairnessTolerance: 0.06,
       proactiveTradeChance: 0.6,
       usePowersProactively: 1.0,
+      // Un vrai bon joueur ne suit jamais une formule fixe : il varie
+      // volontairement pour ne jamais être lisible/prévisible, surtout
+      // en enchère scellée. Ce n'est PAS une erreur (mistakeChance=0),
+      // c'est de l'imprévisibilité délibérée — donc ce paramètre reste
+      // élevé même au niveau le plus fort, contrairement aux erreurs.
+      decisionJitter: 0.20,
       thinkTimeSimpleMs: [200, 380],
       thinkTimeComplexMs: [700, 1500],
     },
@@ -94,6 +103,20 @@
 
   function randRange([min, max]) {
     return Math.floor(min + Math.random() * (max - min));
+  }
+
+  // Applique une variation aléatoire volontaire à un montant/seuil calculé
+  // à partir d'informations PUBLIQUES (argent, prix affiché...). Sans ça,
+  // n'importe qui peut recalculer exactement la même formule que l'IA et
+  // la battre systématiquement d'un cheveu (ex : toujours miser 1 de plus
+  // qu'elle en enchère scellée). Un vrai joueur ne suit jamais une formule
+  // figée — il varie, ce qui rend son seuil réel impossible à deviner
+  // avec certitude, même en l'observant sur plusieurs tours.
+  function withJitter(value, profile) {
+    const spread = profile.decisionJitter || 0;
+    if (spread <= 0) return value;
+    const factor = 1 + (Math.random() * 2 - 1) * spread;
+    return value * factor;
   }
 
   // ---------------------------------------------------------------------
@@ -350,8 +373,9 @@
     const value = strategicValue(state, me.id, tileIndex, profile);
     const reserve = safeReserve(state, profile);
     const canAfford = me.money - price >= reserve;
+    const effectiveThreshold = Math.max(0.4, withJitter(0.85, profile));
 
-    let wantsToBuy = canAfford && value >= price * 0.85;
+    let wantsToBuy = canAfford && value >= price * effectiveThreshold;
     if (chance(profile.mistakeChance)) wantsToBuy = !wantsToBuy;
 
     engine.decide(me.id, wantsToBuy);
@@ -366,14 +390,17 @@
     const tile = state.board[auction.tileIndex];
     const value = strategicValue(state, me.id, auction.tileIndex, profile);
     const reserve = safeReserve(state, profile);
-    const maxWillingToPay = Math.min(
+    const rawMax = Math.min(
       me.money - reserve,
       Math.floor(value * profile.auctionAggressiveness)
     );
+    // Variation volontaire : sans elle, quiconque connaît l'argent de l'IA
+    // et le prix de la case peut recalculer sa mise exacte et la battre
+    // systématiquement d'un cheveu, même en enchère scellée.
+    const maxWillingToPay = Math.max(0, Math.min(me.money, Math.round(withJitter(Math.max(0, rawMax), profile))));
 
     if (auction.mode === "secret") {
-      const bid = Math.max(0, maxWillingToPay);
-      engine.submitAuctionBid(me.id, bid);
+      engine.submitAuctionBid(me.id, maxWillingToPay);
     } else {
       const nextBid = auction.currentBid + Math.max(5, Math.floor(tile.price * 0.08));
       if (nextBid <= maxWillingToPay && nextBid <= me.money) {
@@ -525,8 +552,13 @@
       trade.requestTiles.reduce((s, i) => s + (state.board[i].price || 0), 0) + trade.requestMoney
     );
     const relativeGain = netValue / referenceScale;
+    // Variation volontaire du seuil de tolérance : sinon, quiconque
+    // observe quelques refus/acceptations peut déduire la limite EXACTE
+    // et systématiquement proposer une offre juste en-dessous, en tirant
+    // toujours le maximum de valeur possible de l'IA.
+    const effectiveTolerance = Math.max(0, withJitter(profile.tradeFairnessTolerance, profile));
 
-    let accept = relativeGain >= -profile.tradeFairnessTolerance;
+    let accept = relativeGain >= -effectiveTolerance;
     // Ne jamais accepter un échange qui nous mettrait sous la réserve de sécurité.
     if (me.money + trade.offerMoney - trade.requestMoney < 0) accept = false;
     // Ne jamais aider (sans contrepartie nette positive) le joueur en tête à compléter un monopole.
@@ -543,8 +575,9 @@
     const reserve = safeReserve(state, profile);
     const genuinelyNeedsCash = me.money < reserve * 1.3;
     const totalCostRatio = offer.totalOwed / Math.max(1, offer.principal);
+    const effectiveTolerance = Math.max(0, withJitter(profile.tradeFairnessTolerance, profile));
     // N'accepte que si le besoin est réel ET le coût du crédit reste raisonnable.
-    let accept = genuinelyNeedsCash && totalCostRatio <= 1 + 0.35 + profile.tradeFairnessTolerance;
+    let accept = genuinelyNeedsCash && totalCostRatio <= 1 + 0.35 + effectiveTolerance;
     if (chance(profile.mistakeChance)) accept = !accept;
     engine.respondLoan(offer.id, me.id, accept);
     return { kind: "respondLoan", complex: false };
