@@ -118,7 +118,7 @@
         jailTurns: 0,
         jailFreeCards: 0,
         bankrupt: false,
-        power: this.powersEnabled ? { id: randomPowerId(), used: false, armed: false } : null,
+        power: this.powersEnabled ? { id: randomPowerId(playerNames.length < 3 ? ["forced_swap"] : []), used: false, armed: false } : null,
         insurance: null, // { planId, planName, turnsRemaining, coveragePercent }
         forcedAuctionsUsed: 0,
         inDebt: false, // à découvert, doit vendre/hypothéquer/emprunter avant que la partie ne continue
@@ -206,13 +206,21 @@
 
     moveTo(player, index, collectSalaryIfPassed) {
       const passedGo = collectSalaryIfPassed && index <= player.position && !(player.position === 0);
+      const landedExactlyOnGo = passedGo && index === 0;
       player.position = index;
       if (passedGo) {
         const doubled = this.activeEvent && this.activeEvent.id === "double_salary";
-        const salaryAmount = doubled ? this.salary * 2 : this.salary;
+        let salaryAmount = doubled ? this.salary * 2 : this.salary;
+        // Règle permanente (toujours active, pas un réglage à cocher) :
+        // atterrir EXACTEMENT sur Départ rapporte 1.5x plus que le simple
+        // passage devant.
+        if (landedExactlyOnGo) salaryAmount = Math.floor(salaryAmount * 1.5);
         this.pay(null, player, salaryAmount);
         player.stats.salaryCollected += salaryAmount;
-        this.addLog(`${player.name} passe par la case Départ et touche ${salaryAmount}${doubled ? " (salaire doublé !)" : ""}.`);
+        const landedNote = landedExactlyOnGo ? " (atterrissage exact : x1.5 !)" : "";
+        this.addLog(
+          `${player.name} ${landedExactlyOnGo ? "atterrit sur" : "passe par"} la case Départ et touche ${salaryAmount}${doubled ? " (salaire doublé !)" : ""}${landedNote}.`
+        );
       }
     }
 
@@ -221,7 +229,8 @@
       // d'être envoyé en prison (case "Aller en prison", carte Destin...)
       // — utilisé uniquement côté client pour faire transiter le pion par
       // cette case avant la prison, histoire qu'on comprenne d'où ça vient.
-      this.lastJailEvent = { playerId: player.id, fromIndex: player.position };
+      this._jailEventSeq = (this._jailEventSeq || 0) + 1;
+      this.lastJailEvent = { playerId: player.id, fromIndex: player.position, seq: this._jailEventSeq };
 
       // La case Prison est toujours au premier quart du plateau (comme sur
       // le plateau fixe), quelle que soit la taille réelle de celui-ci.
@@ -506,6 +515,12 @@
         return { ok: false, reason: "Les deux cases doivent être des propriétés/gares/compagnies." };
       }
       if (tileA.owner === null || tileB.owner === null) return { ok: false, reason: "Les deux cases doivent être possédées." };
+      if (tileA.owner === playerId || tileB.owner === playerId) {
+        return { ok: false, reason: "Ce pouvoir échange les propriétés de DEUX AUTRES joueurs — jamais les tiennes." };
+      }
+      if (tileA.owner === tileB.owner) {
+        return { ok: false, reason: "Les deux cases doivent appartenir à deux joueurs différents." };
+      }
       if ((tileA.houses || 0) > 0 || (tileB.houses || 0) > 0) {
         return { ok: false, reason: "Impossible : au moins une des deux cases a des maisons ou un hôtel." };
       }
@@ -979,11 +994,14 @@
           shuffled.forEach((id, i) => {
             mapping[id] = shuffled[(i + 1) % shuffled.length];
           });
-          this.board.forEach((tile) => {
+          const originalOwnership = {};
+          this.board.forEach((tile, index) => {
             if (tile.owner !== null && mapping[tile.owner] !== undefined) {
+              originalOwnership[index] = tile.owner; // pour tout remettre en place une fois l'événement terminé
               tile.owner = mapping[tile.owner];
             }
           });
+          this.activeEvent.originalOwnership = originalOwnership;
           this.addLog(`🔀 Toutes les propriétés changent de mains !`);
         }
       } else if (event.id === "wealth_tax_vacation") {
@@ -1033,8 +1051,14 @@
         this.activeEvent.turnsRemaining -= 1;
         if (this.activeEvent.turnsRemaining <= 0) {
           const ended = WORLD_EVENTS.find((e) => e.id === this.activeEvent.id);
-          this.addLog(`${ended.icon} L'événement "${ended.name}" est terminé.`);
           if (this.activeEvent.id === "rank_reversal") this.turnDirection = 1;
+          if (this.activeEvent.id === "property_shuffle" && this.activeEvent.originalOwnership) {
+            Object.entries(this.activeEvent.originalOwnership).forEach(([index, ownerId]) => {
+              this.board[Number(index)].owner = ownerId;
+            });
+            this.addLog(`🔀 Les propriétés reviennent à leurs propriétaires d'origine.`);
+          }
+          this.addLog(`${ended.icon} L'événement "${ended.name}" est terminé.`);
           this.activeEvent = null;
         }
         return;

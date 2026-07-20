@@ -113,7 +113,7 @@
       name: "Échange forcé",
       icon: "🔁",
       mode: "instant",
-      description: "À ton tour, échange la propriété de deux cases de ton choix (ni l'une ni l'autre ne doit avoir de maison ou d'hôtel dessus).",
+      description: "À ton tour, force un échange entre deux AUTRES joueurs (pas toi) : choisis une propriété appartenant à l'un et une appartenant à l'autre, aucune des deux ne doit avoir de maison ou d'hôtel dessus.",
     },
   ];
 
@@ -129,8 +129,11 @@
     return POWERS.find((p) => p.id === id) || null;
   }
 
-  function randomPowerId() {
-    return POWERS[Math.floor(Math.random() * POWERS.length)].id;
+  function randomPowerId(excludeIds) {
+    const exclude = excludeIds || [];
+    const eligible = POWERS.filter((p) => !exclude.includes(p.id));
+    const pool = eligible.length > 0 ? eligible : POWERS; // filet de sécurité si jamais tout était exclu
+    return pool[Math.floor(Math.random() * pool.length)].id;
   }
 
   return {

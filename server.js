@@ -15,6 +15,7 @@ const { Server } = require("socket.io");
 const { GameEngine } = require(path.join(__dirname, "public", "game", "engine.js"));
 const { buildDefaultSettings, validateSettings } = require(path.join(__dirname, "public", "game", "rules-schema.js"));
 const { generateBoard } = require(path.join(__dirname, "public", "game", "board-generator.js"));
+const AI = require(path.join(__dirname, "public", "game", "ai.js"));
 
 const app = express();
 const server = http.createServer(app);
@@ -43,6 +44,17 @@ function generateRoomCode() {
 function sanitizeName(rawName) {
   const trimmed = (rawName || "").toString().trim().slice(0, 20);
   return trimmed.length > 0 ? trimmed : "Joueur";
+}
+
+let aiIdCounter = 0;
+function generateAIId() {
+  aiIdCounter += 1;
+  return `ai-${aiIdCounter}-${Date.now()}`;
+}
+
+function aiDisplayName(difficulty, existingCount) {
+  const label = (AI.DIFFICULTY_PROFILES[difficulty] || AI.DIFFICULTY_PROFILES.difficile).label;
+  return `IA ${label}${existingCount > 0 ? ` (${existingCount + 1})` : ""}`;
 }
 
 function getRoom(socket) {
@@ -76,11 +88,12 @@ function broadcastLobby(room) {
   io.to(room.code).emit("room:update", {
     code: room.code,
     hostSocketId: room.hostSocketId,
-    players: room.players.map((p) => ({ socketId: p.socketId, name: p.name, ready: p.ready })),
+    players: room.players.map((p) => ({ socketId: p.socketId, name: p.name, ready: p.ready, isAI: !!p.isAI, difficulty: p.difficulty || null })),
     canStart: room.players.length >= MIN_PLAYERS && room.players.every((p) => p.ready),
     maxPlayers: MAX_PLAYERS,
     settings: room.settings,
     previewBoard: room.settings.boardMode === "random" ? room.previewBoard : null,
+    aiDifficulties: Object.keys(AI.DIFFICULTY_PROFILES).map((id) => ({ id, label: AI.DIFFICULTY_PROFILES[id].label })),
   });
 }
 
@@ -92,6 +105,114 @@ function broadcastGame(room) {
     const stateForPlayer = buildStateForPlayer(baseState, playerId, room.settings, room.engine);
     io.to(p.socketId).emit("game:update", { state: stateForPlayer, settings: room.settings });
   });
+
+  scheduleAICheck(room);
+}
+
+// ---------------------------------------------------------------------
+// IA — déclenchement automatique de ses actions.
+//
+// PRINCIPE : après CHAQUE broadcastGame (donc après CHAQUE action de
+// n'importe quel joueur, humain ou IA), on regarde si un joueur IA doit
+// maintenant agir (son tour, une décision/enchère qui le concerne, une
+// offre reçue...). Si oui, on programme son action après un court délai
+// de "réflexion", puis on rappelle broadcastGame — ce qui redéclenche
+// cette même vérification, formant une boucle naturelle qui s'arrête
+// dès qu'il n'y a plus rien à faire pour une IA (typiquement : en
+// attente d'un humain).
+// ---------------------------------------------------------------------
+function findAIRoomPlayer(room, playerId) {
+  const socketId = Object.keys(room.socketToPlayerId).find((sid) => room.socketToPlayerId[sid] === playerId);
+  const player = room.players.find((p) => p.socketId === socketId);
+  return player && player.isAI ? player : null;
+}
+
+function findAIPlayerNeedingToAct(room) {
+  const engine = room.engine;
+  if (!engine || engine.gameOver) return null;
+
+  // Priorité 1 : un joueur (IA) à découvert doit régler sa situation.
+  const debtor = engine.players.find((p) => p.inDebt);
+  if (debtor) {
+    const aiP = findAIRoomPlayer(room, debtor.id);
+    if (aiP) return { player: aiP, kind: "debt", complex: false };
+  }
+
+  // Priorité 2 : décision d'achat en attente.
+  if (engine.pendingDecision) {
+    const aiP = findAIRoomPlayer(room, engine.pendingDecision.playerId);
+    if (aiP) return { player: aiP, kind: "buy", complex: false };
+  }
+
+  // Priorité 3 : enchère en cours.
+  if (engine.pendingAuction) {
+    if (engine.pendingAuction.mode === "secret") {
+      for (const pid of engine.pendingAuction.pendingPlayers) {
+        const aiP = findAIRoomPlayer(room, pid);
+        if (aiP) return { player: aiP, kind: "auction", complex: true };
+      }
+      return null;
+    }
+    const aiP = findAIRoomPlayer(room, engine.currentAuctionBidderId());
+    if (aiP) return { player: aiP, kind: "auction", complex: true };
+    return null;
+  }
+
+  // Priorité 4 : choix de case d'arrivée (pouvoir Libre arrêt).
+  if (engine.pendingMoveChoice) {
+    const aiP = findAIRoomPlayer(room, engine.pendingMoveChoice.playerId);
+    if (aiP) return { player: aiP, kind: "moveChoice", complex: true };
+  }
+
+  // Priorité 5 : offres reçues (échange/prêt) adressées à une IA — traitées
+  // avant même son propre tour, comme le ferait un humain attentif.
+  for (const offer of engine.tradeOffers) {
+    const aiP = findAIRoomPlayer(room, offer.toId);
+    if (aiP) return { player: aiP, kind: "trade", complex: true };
+  }
+  for (const offer of engine.loanOffers) {
+    const aiP = findAIRoomPlayer(room, offer.borrowerId);
+    if (aiP) return { player: aiP, kind: "loan", complex: true };
+  }
+
+  // Priorité 6 : c'est le tour d'une IA et rien n'est en attente -> elle joue.
+  const current = engine.players[engine.currentPlayerIndex];
+  if (current && !current.bankrupt) {
+    const aiP = findAIRoomPlayer(room, current.id);
+    if (aiP) return { player: aiP, kind: "turn", complex: false };
+  }
+
+  return null;
+}
+
+function scheduleAICheck(room) {
+  if (!room.started || !room.engine || room.engine.gameOver) return;
+  if (room.aiCheckScheduled) return; // évite d'empiler plusieurs vérifications identiques
+  room.aiCheckScheduled = true;
+  setTimeout(() => {
+    room.aiCheckScheduled = false;
+    runNextAIAction(room);
+  }, 10);
+}
+
+function runNextAIAction(room) {
+  if (!room.started || !room.engine || room.engine.gameOver) return;
+  const situation = findAIPlayerNeedingToAct(room);
+  if (!situation) return;
+
+  const { player: aiPlayer, kind, complex } = situation;
+  const playerId = room.socketToPlayerId[aiPlayer.socketId];
+  const thinkTime = AI.computeThinkTime({ complex }, aiPlayer.difficulty);
+
+  setTimeout(() => {
+    if (!room.started || !room.engine || room.engine.gameOver) return; // la partie a pu se terminer entre-temps
+    const stillNeeded = findAIPlayerNeedingToAct(room);
+    if (!stillNeeded || stillNeeded.player.socketId !== aiPlayer.socketId || stillNeeded.kind !== kind) {
+      return; // la situation a changé, le prochain cycle s'en chargera correctement
+    }
+    AI.decideAndAct(room.engine, playerId, aiPlayer.difficulty);
+    broadcastGame(room);
+  }, thinkTime);
 }
 
 // Si la règle "négociations secrètes" est active, on part du principe que
@@ -148,6 +269,7 @@ io.on("connection", (socket) => {
       socketToPlayerId: {},
       settings: buildDefaultSettings(),
       previewBoard: null, // rempli si boardMode === "random" (Phase 8b)
+      aiCheckScheduled: false,
     };
     rooms.set(code, room);
 
@@ -185,6 +307,42 @@ io.on("connection", (socket) => {
     const player = room.players.find((p) => p.socketId === socket.id);
     if (!player) return;
     player.ready = !player.ready;
+    broadcastLobby(room);
+  });
+
+  socket.on("room:addAI", ({ difficulty } = {}) => {
+    const room = getRoom(socket);
+    if (!room || room.started) return;
+    if (socket.id !== room.hostSocketId) {
+      socket.emit("room:error", "Seul l'hôte peut ajouter une IA.");
+      return;
+    }
+    if (room.players.length >= MAX_PLAYERS) {
+      socket.emit("room:error", `Ce salon est complet (${MAX_PLAYERS} joueurs max).`);
+      return;
+    }
+    const chosenDifficulty = AI.DIFFICULTY_PROFILES[difficulty] ? difficulty : "difficile";
+    const existingAICount = room.players.filter((p) => p.isAI).length;
+    room.players.push({
+      socketId: generateAIId(),
+      name: aiDisplayName(chosenDifficulty, existingAICount),
+      ready: true, // une IA est toujours prête, pas besoin de la faire "cocher"
+      isAI: true,
+      difficulty: chosenDifficulty,
+    });
+    broadcastLobby(room);
+  });
+
+  socket.on("room:removeAI", ({ socketId } = {}) => {
+    const room = getRoom(socket);
+    if (!room || room.started) return;
+    if (socket.id !== room.hostSocketId) {
+      socket.emit("room:error", "Seul l'hôte peut retirer une IA.");
+      return;
+    }
+    const target = room.players.find((p) => p.socketId === socketId && p.isAI);
+    if (!target) return;
+    room.players = room.players.filter((p) => p.socketId !== socketId);
     broadcastLobby(room);
   });
 
@@ -257,6 +415,7 @@ io.on("connection", (socket) => {
       socketToPlayerId: room.socketToPlayerId,
       settings: room.settings,
     });
+    scheduleAICheck(room);
   });
 
   socket.on("game:roll", () => {
@@ -687,7 +846,8 @@ io.on("connection", (socket) => {
         return;
       }
       if (room.hostSocketId === socket.id) {
-        room.hostSocketId = room.players[0].socketId;
+        const newHost = room.players.find((p) => !p.isAI) || room.players[0];
+        room.hostSocketId = newHost.socketId;
       }
       broadcastLobby(room);
     } else {

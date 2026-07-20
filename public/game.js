@@ -194,21 +194,27 @@ socket.on("room:update", (room) => {
   document.getElementById("lobby-error").textContent = "";
   lobbyCodeEl.textContent = room.code;
 
+  const isHost = room.hostSocketId === socket.id;
+
   lobbyPlayersEl.innerHTML = "";
   room.players.forEach((p) => {
-    const isHost = p.socketId === room.hostSocketId;
+    const isPlayerHost = p.socketId === room.hostSocketId;
     const isMe = p.socketId === socket.id;
 
     const card = document.createElement("div");
     card.className = "player-card";
+    const statusLine = p.isAI ? `🤖 IA (${(room.aiDifficulties || []).find((d) => d.id === p.difficulty)?.label || p.difficulty})` : p.ready ? "✅ Prêt" : "⏳ Pas prêt";
     card.innerHTML = `
-      <h3>${p.name}${isMe ? " (toi)" : ""}${isHost ? " 👑" : ""}</h3>
-      <p class="player-status">${p.ready ? "✅ Prêt" : "⏳ Pas prêt"}</p>
+      <h3>${p.name}${isMe ? " (toi)" : ""}${isPlayerHost ? " 👑" : ""}</h3>
+      <p class="player-status">${statusLine}</p>
+      ${p.isAI && isHost ? `<button class="btn-remove-ai" data-remove-ai="${p.socketId}">Retirer</button>` : ""}
     `;
     lobbyPlayersEl.appendChild(card);
   });
+  lobbyPlayersEl.querySelectorAll("[data-remove-ai]").forEach((btn) => {
+    btn.addEventListener("click", () => socket.emit("room:removeAI", { socketId: btn.dataset.removeAi }));
+  });
 
-  const isHost = room.hostSocketId === socket.id;
   currentIsHost = isHost;
   renderSettingsForm(room.settings || {});
 
@@ -220,8 +226,19 @@ socket.on("room:update", (room) => {
   }
   btnRegenerateBoard.hidden = !isHost;
 
+  addAIPanel.hidden = !isHost || room.players.length >= (room.maxPlayers || 4);
+  if (isHost && room.aiDifficulties && aiDifficultySelect.options.length === 0) {
+    aiDifficultySelect.innerHTML = room.aiDifficulties.map((d) => `<option value="${d.id}">${d.label}</option>`).join("");
+  }
+
   btnStart.hidden = !isHost;
   btnStart.disabled = !room.canStart;
+});
+
+const addAIPanel = document.getElementById("add-ai-panel");
+const aiDifficultySelect = document.getElementById("ai-difficulty-select");
+document.getElementById("btn-add-ai").addEventListener("click", () => {
+  socket.emit("room:addAI", { difficulty: aiDifficultySelect.value });
 });
 
 // ============================================================

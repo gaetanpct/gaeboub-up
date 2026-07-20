@@ -426,7 +426,7 @@
     // pour qu'on comprenne immédiatement pourquoi, exactement comme s'il y
     // était vraiment arrivé en jouant.
     const jailEvent = state.lastJailEvent;
-    const jailEventKey = jailEvent ? `${jailEvent.playerId}-${jailEvent.fromIndex}-${state.logTotalCount}` : null;
+    const jailEventKey = jailEvent ? `${jailEvent.playerId}-${jailEvent.seq}` : null;
     const isNewJailEvent = !!jailEventKey && jailEventKey !== lastRenderedJailEventKey;
     if (jailEventKey) lastRenderedJailEventKey = jailEventKey;
 

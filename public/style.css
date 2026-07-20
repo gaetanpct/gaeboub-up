@@ -712,6 +712,37 @@ button:disabled {
 
 /* ---- Réglages de la partie (salon d'attente) ---- */
 
+.add-ai-panel {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 0.7rem 0.9rem;
+  margin: 0.7rem 0;
+}
+
+.add-ai-panel label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.btn-remove-ai {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.6rem;
+  background: transparent;
+  border: 1px solid var(--negative);
+  color: var(--negative);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
 .settings-panel {
   background: var(--bg-panel);
   border-radius: 8px;
