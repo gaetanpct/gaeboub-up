@@ -351,8 +351,11 @@ function findAIPlayerNeedingToAct(room) {
       }
       return null;
     }
-    const aiP = findAIRoomPlayer(room, engine.currentAuctionBidderId());
-    if (aiP) return { player: aiP, kind: "auction", complex: true };
+    const eligible = engine.pendingAuction.activeBidders.filter((id) => id !== engine.pendingAuction.currentBidderId);
+    for (const pid of eligible) {
+      const aiP = findAIRoomPlayer(room, pid);
+      if (aiP) return { player: aiP, kind: "auction", complex: true };
+    }
     return null;
   }
 

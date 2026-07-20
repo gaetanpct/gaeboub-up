@@ -826,7 +826,7 @@
       const canBidNow =
         state.pendingAuction.mode === "secret"
           ? state.pendingAuction.pendingPlayers.includes(playerId)
-          : state.pendingAuction.currentTurnPlayerId === playerId;
+          : state.pendingAuction.activeBidders.includes(playerId) && state.pendingAuction.currentBidderId !== playerId;
       if (canBidNow) return decideAuctionBid(engine, state, me, profile);
       return null; // ce n'est pas à moi de miser pour l'instant
     }

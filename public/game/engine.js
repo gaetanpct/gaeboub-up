@@ -1408,10 +1408,9 @@
           currentBid: 0,
           currentBidderId: null,
           activeBidders: bidders,
-          turnIndex: 0,
           triggeredByRoll,
         };
-        this.addLog(`🔨 Enchère classique sur ${tile.name} ! Chacun mise à son tour ou passe.`);
+        this.addLog(`🔨 Enchère classique sur ${tile.name} ! Tout le monde peut surenchérir librement (sauf le meilleur enchérisseur actuel).`);
       } else {
         this.pendingAuction = { mode: "secret", tileIndex, bids: {}, pendingPlayers: bidders, triggeredByRoll };
         this.addLog(`🔨 Enchère scellée sur ${tile.name} ! Chaque joueur mise en secret (0 pour passer).`);
@@ -1495,20 +1494,24 @@
       this._concludeAuction(bestId, bestBid);
     }
 
-    // -- Enchère classique (à la criée, tour par tour) --
-    currentAuctionBidderId() {
-      if (!this.pendingAuction || this.pendingAuction.mode !== "classic") return null;
-      const a = this.pendingAuction;
-      return a.activeBidders[a.turnIndex % a.activeBidders.length];
-    }
-
+    // -- Enchère classique (à la criée, LIBRE) --
+    // N'importe quel joueur encore actif dans l'enchère peut surenchérir
+    // À TOUT MOMENT — la seule règle est qu'on ne peut pas surenchérir
+    // sur SA PROPRE mise (il faut attendre qu'un autre joueur surenchérisse
+    // d'abord). Fini le tour par tour strict qui bloquait tout le monde
+    // en attendant qu'un joueur récalcitrant daigne agir.
     raiseAuctionBid(playerId, amount) {
       if (!this.pendingAuction || this.pendingAuction.mode !== "classic") {
         return { ok: false, reason: "Aucune enchère classique en cours." };
       }
-      if (this.currentAuctionBidderId() !== playerId) return { ok: false, reason: "Ce n'est pas ton tour d'enchérir." };
-
       const auction = this.pendingAuction;
+      if (!auction.activeBidders.includes(playerId)) {
+        return { ok: false, reason: "Tu ne participes plus à cette enchère." };
+      }
+      if (playerId === auction.currentBidderId) {
+        return { ok: false, reason: "Tu es déjà le meilleur enchérisseur : attends qu'un autre joueur surenchérisse." };
+      }
+
       const player = this.players[playerId];
       const bid = Math.floor(Number(amount) || 0);
       if (bid <= auction.currentBid) return { ok: false, reason: "Ta mise doit être supérieure à la mise actuelle." };
@@ -1516,7 +1519,6 @@
 
       auction.currentBid = bid;
       auction.currentBidderId = playerId;
-      auction.turnIndex = (auction.turnIndex + 1) % auction.activeBidders.length;
       this.addLog(`${player.name} enchérit à ${bid} sur ${this.board[auction.tileIndex].name}.`);
       return { ok: true };
     }
@@ -1525,22 +1527,23 @@
       if (!this.pendingAuction || this.pendingAuction.mode !== "classic") {
         return { ok: false, reason: "Aucune enchère classique en cours." };
       }
-      if (this.currentAuctionBidderId() !== playerId) return { ok: false, reason: "Ce n'est pas ton tour d'enchérir." };
-
       const auction = this.pendingAuction;
-      const player = this.players[playerId];
-      const removedTurnIndex = auction.turnIndex;
-      auction.activeBidders.splice(removedTurnIndex, 1);
-      this.addLog(`${player.name} passe sur l'enchère.`);
-
-      if (auction.activeBidders.length <= 1) {
-        const winnerId = auction.activeBidders.length === 1 ? auction.activeBidders[0] : null;
-        const finalWinner = winnerId !== null && winnerId === auction.currentBidderId ? winnerId : null;
-        this._concludeAuction(finalWinner, auction.currentBid);
-        return { ok: true };
+      if (!auction.activeBidders.includes(playerId)) {
+        return { ok: false, reason: "Tu ne participes plus à cette enchère." };
       }
 
-      if (auction.turnIndex >= auction.activeBidders.length) auction.turnIndex = 0;
+      const player = this.players[playerId];
+      auction.activeBidders = auction.activeBidders.filter((id) => id !== playerId);
+      this.addLog(`${player.name} se retire de l'enchère (sa mise en cours, s'il en a une, reste valable).`);
+
+      // S'il ne reste plus PERSONNE en mesure de surenchérir (tout le
+      // monde a lâché sauf, au mieux, le meilleur enchérisseur actuel qui
+      // ne peut pas surenchérir sur lui-même), l'enchère est décidée :
+      // pas besoin d'attendre le minuteur pour rien.
+      const stillCanRaise = auction.activeBidders.filter((id) => id !== auction.currentBidderId);
+      if (stillCanRaise.length === 0) {
+        this._concludeAuction(auction.currentBid > 0 ? auction.currentBidderId : null, auction.currentBid);
+      }
       return { ok: true };
     }
 
@@ -1863,7 +1866,7 @@
                 currentBid: this.pendingAuction.currentBid,
                 currentBidderId: this.pendingAuction.currentBidderId,
                 activeBidders: [...this.pendingAuction.activeBidders],
-                currentTurnPlayerId: this.currentAuctionBidderId(),
+                eligibleBidders: this.pendingAuction.activeBidders.filter((id) => id !== this.pendingAuction.currentBidderId),
               }
             : {
                 mode: "secret",
@@ -1948,15 +1951,27 @@
         } else if (this.pendingAuction) {
           const tile = this.board[this.pendingAuction.tileIndex];
           if (this.pendingAuction.mode === "classic") {
-            // Chacun mise ou passe à son tour jusqu'à ce qu'il n'en reste qu'un.
-            const bidderId = this.currentAuctionBidderId();
-            const bidder = this.players[bidderId];
-            const nextBid = this.pendingAuction.currentBid + Math.floor(tile.price * 0.1) + 5;
-            const wantsIt = this.decideBuy(bidder, tile) && nextBid <= tile.price;
-            if (wantsIt && nextBid <= bidder.money) {
-              this.raiseAuctionBid(bidderId, nextBid);
-            } else {
-              this.passAuctionBid(bidderId);
+            // Chacun des enchérisseurs encore actifs (sauf le meilleur
+            // actuel) décide indépendamment de surenchérir ou de se
+            // retirer — plus de tour strict.
+            const auction = this.pendingAuction;
+            const eligible = auction.activeBidders.filter((id) => id !== auction.currentBidderId);
+            let acted = false;
+            eligible.forEach((bidderId) => {
+              if (!this.pendingAuction) return; // a pu se conclure entre deux décisions
+              const bidder = this.players[bidderId];
+              const nextBid = this.pendingAuction.currentBid + Math.floor(tile.price * 0.1) + 5;
+              const wantsIt = this.decideBuy(bidder, tile) && nextBid <= tile.price;
+              if (wantsIt && nextBid <= bidder.money) {
+                this.raiseAuctionBid(bidderId, nextBid);
+              } else {
+                this.passAuctionBid(bidderId);
+              }
+              acted = true;
+            });
+            if (!acted && this.pendingAuction) {
+              // Personne n'était éligible (ne devrait pas arriver, filet de sécurité).
+              this.forceEndClassicAuction();
             }
           } else {
             // Copie du tableau : on va le modifier pendant qu'on le parcourt.

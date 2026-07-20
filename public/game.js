@@ -958,16 +958,21 @@ function startAuctionCountdown(auction) {
   stopAuctionCountdown();
   if (!auction.responseDeadline) return;
   const tick = () => {
-    const el = document.getElementById("auction-countdown");
+    const el = document.getElementById("auction-countdowns");
     if (!el) {
       stopAuctionCountdown();
       return;
     }
     const responseLeft = Math.max(0, Math.ceil((auction.responseDeadline - Date.now()) / 1000));
     const hardLeft = auction.hardDeadline ? Math.max(0, Math.ceil((auction.hardDeadline - Date.now()) / 1000)) : null;
-    const displayed = hardLeft !== null ? Math.min(responseLeft, hardLeft) : responseLeft;
-    el.textContent = `⏱️ ${displayed}s avant que l'enchère ne se conclue toute seule`;
-    el.classList.toggle("auction-countdown--urgent", displayed <= 3);
+    el.innerHTML = `
+      <p class="auction-countdown ${responseLeft <= 3 ? "auction-countdown--urgent" : ""}">⏱️ ${responseLeft}s avant conclusion si personne ne surenchérit (repart à 0 à chaque mise)</p>
+      ${
+        hardLeft !== null
+          ? `<p class="auction-countdown ${hardLeft <= 5 ? "auction-countdown--urgent" : ""}">⏳ ${hardLeft}s avant la fin définitive de l'enchère (ne repart jamais à 0)</p>`
+          : ""
+      }
+    `;
   };
   tick();
   auctionCountdownInterval = setInterval(tick, 250);
@@ -1059,12 +1064,16 @@ function renderActionArea(state) {
       const box = document.createElement("div");
       box.className = "action-box";
 
-      if (auction.currentTurnPlayerId === myPlayerId) {
+      const iAmEligible = (auction.eligibleBidders || []).includes(myPlayerId);
+      const iAmLeading = auction.currentBidderId === myPlayerId;
+
+      if (iAmEligible) {
         const minBid = auction.currentBid + 1;
         box.innerHTML = `
           <p>🔨 Enchère classique sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
           <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
-          <p id="auction-countdown" class="auction-countdown"></p>
+          <p class="properties-empty">Libre à toi de surenchérir dès que tu veux — pas besoin d'attendre ton tour.</p>
+          <div id="auction-countdowns" class="auction-countdowns"></div>
           <div class="quick-bid-row">
             <button class="btn-quick-bid" data-quick-bid="10">+10</button>
             <button class="btn-quick-bid" data-quick-bid="50">+50</button>
@@ -1074,7 +1083,7 @@ function renderActionArea(state) {
             <input type="number" id="auction-raise-input" min="${minBid}" value="${minBid}" class="auction-input" />
             <button id="btn-raise-bid">Enchérir ce montant précis</button>
           </div>
-          <button id="btn-pass-bid">Passer</button>
+          <button id="btn-pass-bid">Me retirer de l'enchère</button>
         `;
         actionArea.appendChild(box);
         box.querySelectorAll(".btn-quick-bid").forEach((btn) => {
@@ -1090,12 +1099,14 @@ function renderActionArea(state) {
           socket.emit("game:auctionPass");
         });
       } else {
-        const turnName = state.players[auction.currentTurnPlayerId].name;
+        const waitingMessage = iAmLeading
+          ? "Tu es le meilleur enchérisseur pour l'instant : attends qu'un autre joueur surenchérisse (ou que le temps s'écoule)."
+          : "Tu ne participes plus à cette enchère.";
         box.innerHTML = `
           <p>🔨 Enchère classique sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong></p>
           <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
-          <p id="auction-countdown" class="auction-countdown"></p>
-          <p class="action-box--waiting">Au tour de ${turnName}...</p>
+          <div id="auction-countdowns" class="auction-countdowns"></div>
+          <p class="action-box--waiting">${waitingMessage}</p>
         `;
         actionArea.appendChild(box);
       }
@@ -1119,10 +1130,22 @@ function renderActionArea(state) {
       box.innerHTML = `
         <p>🔨 Enchère scellée sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
         ${spyReveal}
-        <input type="number" id="auction-bid-input" min="0" value="0" class="auction-input" />
-        <button id="btn-submit-bid" class="btn-primary">Miser (0 = passer)</button>
+        <div class="stepper-row">
+          <button id="btn-bid-decrease" class="btn-stepper" type="button" title="Baisser de 2">− 2</button>
+          <input type="number" id="auction-bid-input" min="0" value="0" class="auction-input" />
+          <button id="btn-bid-increase" class="btn-stepper" type="button" title="Augmenter de 10">+ 10</button>
+        </div>
+        <button id="btn-submit-bid" class="btn-primary">Miser ce montant (0 = passer)</button>
       `;
       actionArea.appendChild(box);
+      document.getElementById("btn-bid-increase").addEventListener("click", () => {
+        const input = document.getElementById("auction-bid-input");
+        input.value = Math.max(0, (Number(input.value) || 0) + 10);
+      });
+      document.getElementById("btn-bid-decrease").addEventListener("click", () => {
+        const input = document.getElementById("auction-bid-input");
+        input.value = Math.max(0, (Number(input.value) || 0) - 2);
+      });
       document.getElementById("btn-submit-bid").addEventListener("click", () => {
         const amount = Number(document.getElementById("auction-bid-input").value) || 0;
         socket.emit("game:auctionBid", { amount });
