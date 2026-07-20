@@ -712,6 +712,20 @@ button:disabled {
 
 /* ---- Réglages de la partie (salon d'attente) ---- */
 
+.account-status {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.6rem;
+}
+
+.account-status__actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.8rem;
+  margin-top: 0.2rem;
+}
+
 .add-ai-panel {
   display: flex;
   align-items: center;
@@ -1074,6 +1088,41 @@ body.is-game-screen .app {
   background: var(--bg-void);
   color: var(--text-primary);
   margin: 0.4rem 0.4rem 0.4rem 0;
+}
+
+.quick-bid-row {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin: 0.5rem 0;
+}
+
+.btn-quick-bid {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  font-weight: 700;
+  font-size: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--gold-dim);
+  background: linear-gradient(160deg, var(--gold-bright), var(--gold));
+  color: var(--bg-void);
+  cursor: pointer;
+}
+
+.btn-quick-bid:hover {
+  filter: brightness(1.08);
+}
+
+.auction-countdown {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-align: center;
+  margin: 0.3rem 0;
+}
+
+.auction-countdown--urgent {
+  color: var(--negative);
+  font-weight: 700;
 }
 
 .trade-form {

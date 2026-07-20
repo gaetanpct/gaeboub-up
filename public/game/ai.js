@@ -588,19 +588,20 @@
   // argent équivalent à sa valeur, avec une petite marge en ma faveur).
   function considerProposingTrade(engine, state, me, profile) {
     if (state.activeEvent && state.activeEvent.id === "trade_freeze") return null;
-    if (!chance(profile.proactiveTradeChance)) return null;
     const alreadyProposedTo = new Set(state.tradeOffers.filter((t) => t.fromId === me.id).map((t) => t.toId));
 
+    // 1) Cherche la meilleure case adverse qui complèterait un de mes groupes.
     let bestTarget = null;
     let bestTileIdx = null;
     let bestValue = 0;
     state.board.forEach((tile, idx) => {
       if (tile.type !== "property" || tile.owner === null || tile.owner === me.id) return;
-      if (tile.houses > 0) return;
+      if (tile.houses > 0 || tile.mortgaged) return;
+      if (alreadyProposedTo.has(tile.owner)) return;
+      if (recentlyProposedTo(state, me, state.players[tile.owner].name, 12)) return;
       const owned = groupOwnershipCount(state, me.id, tile.group);
       const groupSize = tilesOfGroup(state, tile.group).length;
       if (owned !== groupSize - 1) return; // ne cible que ce qui complèterait un groupe
-      if (alreadyProposedTo.has(tile.owner)) return;
       const value = strategicValue(state, me.id, idx, profile);
       if (value > bestValue) {
         bestValue = value;
@@ -611,43 +612,171 @@
 
     if (bestTarget === null) return null;
     const targetTile = state.board[bestTileIdx];
-    const offerMoney = Math.min(me.money - safeReserve(state, profile), Math.floor((targetTile.price || 0) * 1.15));
-    if (offerMoney <= 0) return null;
 
-    engine.proposeTrade(me.id, bestTarget, [], offerMoney, [bestTileIdx], 0);
-    return { kind: "proposeTrade", complex: true };
+    // Plus l'occasion est bonne (ratio valeur/prix), plus l'IA la saisit
+    // presque systématiquement — le hasard ne sert qu'à occasionnellement
+    // laisser passer une occasion moyenne (pour ne pas paraître robotique
+    // en tentant sa chance à CHAQUE tour sur tout), jamais une excellente.
+    const opportunityStrength = bestValue / Math.max(1, targetTile.price || 1);
+    const takeChance = Math.min(1, profile.proactiveTradeChance + opportunityStrength * 0.25);
+    if (!chance(takeChance)) return null;
+
+    // 2) Ai-je une case "de trop" (isolée dans un groupe que je ne détiens
+    //    qu'à moitié, donc peu utile pour moi) qui complèterait justement
+    //    un groupe POUR CE JOUEUR ? Une offre propriété-contre-propriété
+    //    (plutôt que 100% en argent) est souvent perçue comme plus juste
+    //    et acceptée plus facilement.
+    let offerTileIdx = null;
+    state.board.forEach((tile, idx) => {
+      if (offerTileIdx !== null) return;
+      if (tile.type !== "property" || tile.owner !== me.id || (tile.houses || 0) > 0 || tile.mortgaged || idx === bestTileIdx) return;
+      const myGroupSize = tilesOfGroup(state, tile.group).length;
+      if (myGroupSize > 1 && groupOwnershipCount(state, me.id, tile.group) > 1) return; // je progresse déjà bien sur ce groupe, je la garde
+      const theirOwned = groupOwnershipCount(state, bestTarget, tile.group);
+      if (theirOwned === tilesOfGroup(state, tile.group).length - 1) offerTileIdx = idx; // aubaine réciproque
+    });
+
+    const reserve = safeReserve(state, profile);
+    const offerTiles = [];
+    let offerMoney = 0;
+    if (offerTileIdx !== null) {
+      offerTiles.push(offerTileIdx);
+      const priceDiff = (targetTile.price || 0) - (state.board[offerTileIdx].price || 0);
+      offerMoney = Math.max(0, Math.min(me.money - reserve, Math.floor(priceDiff * 1.1)));
+    } else {
+      offerMoney = Math.min(me.money - reserve, Math.floor((targetTile.price || 0) * 1.15));
+    }
+    if (offerTiles.length === 0 && offerMoney <= 0) return null;
+
+    const result = engine.proposeTrade(me.id, bestTarget, offerTiles, offerMoney, [bestTileIdx], 0);
+    return result && result.ok ? { kind: "proposeTrade", complex: true } : false;
   }
 
   // En tant que prêteur potentiel : propose un petit prêt à un adversaire
   // clairement à court d'argent, à un taux qui reste rentable pour moi.
   function considerProposingLoan(engine, state, me, profile) {
     if (!state.loansEnabled) return null;
-    if (!chance(profile.proactiveTradeChance * 0.5)) return null;
     const reserve = safeReserve(state, profile);
-    if (me.money < reserve * 2) return null;
+    if (me.money < reserve * 1.8) return null; // ne prête que si vraiment excédentaire
+    if (!chance(profile.proactiveTradeChance * 0.6)) return null;
 
     const alreadyOfferedTo = new Set(state.loanOffers.filter((o) => o.lenderId === me.id).map((o) => o.borrowerId));
-    const target = state.players.find(
-      (p) => p.id !== me.id && !p.bankrupt && !alreadyOfferedTo.has(p.id) && p.money < 100 && p.money >= 0
+    // Cible quelqu'un qui a réellement besoin de liquidités, mais qui a
+    // encore un minimum de biens en jeu (donc une vraie chance de
+    // rembourser) — éviter de prêter à quelqu'un déjà proche de la
+    // faillite, où le capital prêté risque d'être perdu.
+    const candidates = state.players.filter(
+      (p) =>
+        p.id !== me.id &&
+        !p.bankrupt &&
+        !alreadyOfferedTo.has(p.id) &&
+        !recentlyProposedTo(state, me, p.name, 12) &&
+        p.money >= 0 &&
+        p.money < reserve
     );
+    const target = candidates
+      .filter((p) => netWorthOf(state, p.id) > 150)
+      .sort((a, b) => a.money - b.money)[0];
     if (!target) return null;
 
-    const amount = Math.min(150, Math.floor((me.money - reserve) / 2));
-    if (amount < 30) return null;
-    engine.proposeLoan(me.id, target.id, amount, 20, 6);
-    return { kind: "proposeLoan", complex: true };
+    const maxLendable = Math.floor((me.money - reserve) / 2);
+    const amount = Math.min(400, Math.max(50, maxLendable));
+    if (amount < 40) return null;
+    const result = engine.proposeLoan(me.id, target.id, amount, 18, 6);
+    return result && result.ok ? { kind: "proposeLoan", complex: true } : false;
   }
 
   // ---------------------------------------------------------------------
   // Déroulement du tour : gère pouvoirs + construction avant de lancer,
   // puis lance les dés.
   // ---------------------------------------------------------------------
+  // Enchère forcée : une ressource limitée (quelques usages par partie),
+  // donc réservée aux cibles vraiment stratégiques — une case qui
+  // compléterait (ou avancerait fort) un groupe pour MOI, avant qu'un
+  // adversaire ne tombe dessus par hasard. Prendre l'initiative plutôt
+  // que d'attendre.
+  function considerForcedAuction(engine, state, me, profile) {
+    if (!state.forcedAuctionsPerGame || me.forcedAuctionsUsed >= state.forcedAuctionsPerGame) return false;
+    if (state.pendingAuction || state.pendingDecision) return false;
+
+    let bestIndex = null;
+    let bestRatio = 0;
+    state.board.forEach((tile, index) => {
+      if (!OWNABLE_TYPES.includes(tile.type) || tile.owner !== null) return;
+      const price = tile.price || 0;
+      if (price > me.money - safeReserve(state, profile)) return;
+      const value = strategicValue(state, me.id, index, profile);
+      const ratio = value / Math.max(1, price);
+      if (ratio > bestRatio) {
+        bestRatio = ratio;
+        bestIndex = index;
+      }
+    });
+
+    // Seuil fixe (pas de variation volontaire ici : ce n'est pas un point
+    // qu'un adversaire pourrait "exploiter" en le devinant, contrairement
+    // aux enchères/échanges — donc pas besoin d'imprévisibilité, on veut
+    // au contraire une décision fiable). Une case SANS aucun intérêt
+    // monopolistique ne peut pas dépasser un ratio d'environ 1.6 (bonus de
+    // rendement locatif seul) ; 1.85 laisse une marge de sécurité claire
+    // pour ne réagir qu'à une vraie opportunité de monopole.
+    if (bestIndex === null) return false;
+    if (bestRatio < 1.85) return false;
+
+    const result = engine.startForcedAuction(me.id, bestIndex);
+    return !!(result && result.ok);
+  }
+
+  // Empêche de reproposer sans arrêt au(x) même(s) joueur(s) : sans ça,
+  // une proposition en arrière-plan (hors de mon tour) peut se répéter à
+  // chaque vérification et empêcher le destinataire de jamais en finir
+  // avec ses offres reçues pour enfin jouer son propre tour — bloquant
+  // la partie pour de bon. S'appuie sur le journal (toujours croissant,
+  // même quand les tours, eux, ne progressent pas) plutôt que sur le
+  // numéro de tour.
+  function recentlyProposedTo(state, me, targetName, windowLines) {
+    const recentLines = state.log.slice(-windowLines);
+    return recentLines.some((l) => l.startsWith(`${me.name} propose`) && l.includes(targetName));
+  }
+
+  function alreadyTookInitiativeThisTurn(state, me) {
+    let lastBannerIdx = -1;
+    for (let i = state.log.length - 1; i >= 0; i--) {
+      if (state.log[i].startsWith("---")) {
+        lastBannerIdx = i;
+        break;
+      }
+    }
+    const linesThisTurn = lastBannerIdx >= 0 ? state.log.slice(lastBannerIdx + 1) : state.log;
+    return linesThisTurn.some(
+      (l) =>
+        l.startsWith(`${me.name} propose un échange`) ||
+        l.includes(`${me.name} propose un prêt`) ||
+        l.includes(`${me.name} déclenche une enchère forcée`)
+    );
+  }
+
   function decideTurnActions(engine, state, me, profile) {
     if (handlePowerBeforeRoll(engine, state, me, profile)) {
       return { kind: "power", complex: true };
     }
     if (considerBuilding(engine, state, me, profile)) {
       return { kind: "build", complex: true };
+    }
+    // Au plus UNE tentative d'initiative (échange, prêt, enchère forcée)
+    // par tour, peu importe la cible — sinon, avec plusieurs adversaires
+    // possibles, l'IA pourrait tourner indéfiniment de l'un à l'autre
+    // sans jamais lancer les dés.
+    if (!alreadyTookInitiativeThisTurn(state, me)) {
+      if (considerForcedAuction(engine, state, me, profile)) {
+        return { kind: "forcedAuction", complex: true };
+      }
+      if (considerProposingTrade(engine, state, me, profile)) {
+        return { kind: "proposeTrade", complex: true };
+      }
+      if (considerProposingLoan(engine, state, me, profile)) {
+        return { kind: "proposeLoan", complex: true };
+      }
     }
     engine.roll();
     return { kind: "roll", complex: false };
@@ -658,11 +787,34 @@
   // action nécessaire pour ce joueur IA, exactement comme le ferait un
   // humain via l'interface (une action par appel).
   // ---------------------------------------------------------------------
+  // Stratégie de rattrapage : un joueur loin derrière au classement doit
+  // prendre plus de risques (sinon il ne revient jamais dans la course),
+  // tandis qu'un joueur en tête peut rester plus mesuré. On dérive un
+  // profil "effectif" à partir du profil de base, ajusté selon la
+  // position actuelle — sans jamais modifier le profil de base lui-même.
+  function adjustProfileForRank(state, me, profile) {
+    const active = state.players.filter((p) => !p.bankrupt);
+    if (active.length <= 1) return profile;
+    const rank = myRank(state, me.id);
+    if (rank === 1) return profile;
+
+    const behindFactor = (rank - 1) / Math.max(1, active.length - 1); // 0..1, 1 = dernier
+    return {
+      ...profile,
+      cashSafetyMargin: Math.max(60, Math.floor(profile.cashSafetyMargin * (1 - 0.35 * behindFactor))),
+      auctionAggressiveness: profile.auctionAggressiveness * (1 + 0.25 * behindFactor),
+      tradeFairnessTolerance: profile.tradeFairnessTolerance + 0.15 * behindFactor,
+      proactiveTradeChance: Math.min(1, profile.proactiveTradeChance + 0.2 * behindFactor),
+      usePowersProactively: Math.min(1, profile.usePowersProactively + 0.2 * behindFactor),
+    };
+  }
+
   function decideAndAct(engine, playerId, difficulty) {
-    const profile = getProfile(difficulty);
+    const baseProfile = getProfile(difficulty);
     const state = engine.getPublicState();
     const me = state.players.find((p) => p.id === playerId);
     if (!me || me.bankrupt || state.gameOver) return null;
+    const profile = adjustProfileForRank(state, me, baseProfile);
 
     if (me.inDebt) return decideDebtResolution(engine, state, me, profile);
 
@@ -693,7 +845,7 @@
       return decideTurnActions(engine, state, me, profile);
     }
 
-    return considerProposingTrade(engine, state, me, profile) || considerProposingLoan(engine, state, me, profile) || null;
+    return null;
   }
 
   function computeThinkTime(actionInfo, difficulty) {

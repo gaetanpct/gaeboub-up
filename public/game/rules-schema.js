@@ -146,18 +146,7 @@
           type: "boolean",
           default: false,
           info:
-            "Un effet global aléatoire (inversion du sens de jeu, double déplacement, gel des échanges, ventes gratuites, réduction des prix, salaire doublé...) peut se déclencher, pour une durée limitée affichée à l'écran. Un seul actif à la fois.",
-        },
-        {
-          id: "worldEventFrequency",
-          label: "Fréquence",
-          type: "select",
-          default: "normal",
-          options: [
-            { value: "rare", label: "Rare" },
-            { value: "normal", label: "Normale" },
-            { value: "frequent", label: "Fréquente" },
-          ],
+            "Se déclenche quand un joueur tombe sur une case Spéciale (leur nombre se règle dans Plateau) : un effet global aléatoire (inversion du sens de jeu, double déplacement, gel des échanges, ventes gratuites, réduction des prix, salaire doublé...) pour une durée limitée affichée à l'écran. Un seul actif à la fois.",
         },
       ],
     },

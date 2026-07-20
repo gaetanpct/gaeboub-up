@@ -16,12 +16,79 @@ const { GameEngine } = require(path.join(__dirname, "public", "game", "engine.js
 const { buildDefaultSettings, validateSettings } = require(path.join(__dirname, "public", "game", "rules-schema.js"));
 const { generateBoard } = require(path.join(__dirname, "public", "game", "board-generator.js"));
 const AI = require(path.join(__dirname, "public", "game", "ai.js"));
+const db = require(path.join(__dirname, "db.js"));
+const auth = require(path.join(__dirname, "auth.js"));
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+
+// ---------------------------------------------------------------------
+// Comptes — routes REST (indépendantes des salons/parties en temps réel)
+// ---------------------------------------------------------------------
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const payload = token ? auth.verifyToken(token) : null;
+  if (!payload) return res.status(401).json({ error: "Non connecté." });
+  req.userId = payload.userId;
+  next();
+}
+
+app.post("/api/auth/signup", (req, res) => {
+  const { email, password, pseudo } = req.body || {};
+  if (!auth.isValidEmail(email)) return res.status(400).json({ error: "Adresse email invalide." });
+  if (!auth.isValidPassword(password)) return res.status(400).json({ error: "Le mot de passe doit contenir au moins 6 caractères." });
+  if (!auth.isValidPseudo(pseudo)) return res.status(400).json({ error: "Le pseudo doit contenir entre 2 et 20 caractères." });
+
+  if (db.getUserByEmail(email)) {
+    return res.status(409).json({ error: "Un compte existe déjà avec cette adresse email." });
+  }
+
+  const user = db.createUser({ email, passwordHash: auth.hashPassword(password), pseudo: pseudo.trim().slice(0, 20) });
+  const token = auth.signToken(user);
+  res.json({ token, user: { id: user.id, email: user.email, pseudo: user.pseudo } });
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const { email, password } = req.body || {};
+  const user = db.getUserByEmail(email || "");
+  if (!user || !auth.verifyPassword(password || "", user.password_hash)) {
+    return res.status(401).json({ error: "Adresse email ou mot de passe incorrect." });
+  }
+  const token = auth.signToken(user);
+  res.json({ token, user: { id: user.id, email: user.email, pseudo: user.pseudo } });
+});
+
+app.get("/api/auth/me", requireAuth, (req, res) => {
+  const user = db.getUserById(req.userId);
+  if (!user) return res.status(404).json({ error: "Compte introuvable." });
+  res.json({
+    user: { id: user.id, email: user.email, pseudo: user.pseudo },
+    defaultSettings: db.getDefaultSettings(user.id),
+  });
+});
+
+app.put("/api/auth/pseudo", requireAuth, (req, res) => {
+  const { pseudo } = req.body || {};
+  if (!auth.isValidPseudo(pseudo)) return res.status(400).json({ error: "Le pseudo doit contenir entre 2 et 20 caractères." });
+  db.updatePseudo(req.userId, pseudo.trim().slice(0, 20));
+  res.json({ ok: true });
+});
+
+app.put("/api/auth/settings", requireAuth, (req, res) => {
+  const { settings } = req.body || {};
+  if (!settings || typeof settings !== "object") return res.status(400).json({ error: "Réglages invalides." });
+  db.updateDefaultSettings(req.userId, settings);
+  res.json({ ok: true });
+});
+
+app.get("/api/auth/stats", requireAuth, (req, res) => {
+  res.json(db.getAggregateStats(req.userId));
+});
 
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 4;
@@ -98,7 +165,19 @@ function broadcastLobby(room) {
 }
 
 function broadcastGame(room) {
-  const baseState = room.engine.getPublicState();
+  scheduleAuctionTimer(room);
+  let baseState = room.engine.getPublicState();
+
+  if (baseState.pendingAuction && baseState.pendingAuction.mode === "classic" && room.auctionResponseDeadline) {
+    baseState = {
+      ...baseState,
+      pendingAuction: {
+        ...baseState.pendingAuction,
+        responseDeadline: room.auctionResponseDeadline,
+        hardDeadline: room.auctionHardDeadline,
+      },
+    };
+  }
 
   room.players.forEach((p) => {
     const playerId = room.socketToPlayerId[p.socketId];
@@ -106,7 +185,126 @@ function broadcastGame(room) {
     io.to(p.socketId).emit("game:update", { state: stateForPlayer, settings: room.settings });
   });
 
+  if (room.engine.gameOver && !room.statsRecorded) {
+    room.statsRecorded = true;
+    recordGameStatsForRoom(room);
+  }
+
   scheduleAICheck(room);
+}
+
+// ---------------------------------------------------------------------
+// Chronométrage des enchères CLASSIQUES (à la criée) — les enchères
+// scellées n'ont pas de minuteur, chacun mise à son rythme.
+//
+// Deux minuteurs travaillent ensemble : une fenêtre de réponse courte qui
+// repart de zéro à chaque nouvelle surenchère (sinon, la première
+// personne à se taire perdrait alors que les autres réfléchissent encore
+// à raison), plafonnée par une durée totale absolue (sinon une enchère
+// très animée pourrait s'éterniser indéfiniment).
+// ---------------------------------------------------------------------
+const AUCTION_RESPONSE_WINDOW_MS = 8000;
+const AUCTION_HARD_CAP_MS = 25000;
+
+function clearAuctionTimers(room) {
+  if (room.auctionResponseTimer) clearTimeout(room.auctionResponseTimer);
+  if (room.auctionHardTimer) clearTimeout(room.auctionHardTimer);
+  room.auctionResponseTimer = null;
+  room.auctionHardTimer = null;
+  room.auctionTimerKey = undefined;
+  room.auctionStartedAt = null;
+  room.auctionResponseDeadline = null;
+  room.auctionHardDeadline = null;
+  room.auctionLastBid = undefined;
+}
+
+function forceConcludeIfStillSameAuction(room, auctionKey) {
+  if (!room.engine || !room.engine.pendingAuction) return;
+  if (room.engine.pendingAuction.mode !== "classic") return;
+  if (String(room.engine.pendingAuction.tileIndex) !== auctionKey) return;
+  room.engine.forceEndClassicAuction();
+  clearAuctionTimers(room);
+  broadcastGame(room);
+}
+
+function resetAuctionResponseTimer(room) {
+  if (room.auctionResponseTimer) clearTimeout(room.auctionResponseTimer);
+  const auctionKey = room.auctionTimerKey;
+  room.auctionResponseDeadline = Date.now() + AUCTION_RESPONSE_WINDOW_MS;
+  room.auctionResponseTimer = setTimeout(() => {
+    forceConcludeIfStillSameAuction(room, auctionKey);
+  }, AUCTION_RESPONSE_WINDOW_MS);
+}
+
+function scheduleAuctionTimer(room) {
+  if (!room.started || !room.engine) return;
+  const auction = room.engine.pendingAuction;
+  if (!auction || auction.mode !== "classic") {
+    if (room.auctionTimerKey !== undefined) clearAuctionTimers(room);
+    return;
+  }
+
+  const auctionKey = String(auction.tileIndex);
+  if (room.auctionTimerKey === auctionKey) {
+    // Même enchère déjà suivie : si la mise a changé depuis la dernière
+    // fois, la fenêtre de réponse repart de zéro.
+    if (room.auctionLastBid !== auction.currentBid) {
+      room.auctionLastBid = auction.currentBid;
+      resetAuctionResponseTimer(room);
+    }
+    return;
+  }
+
+  // Nouvelle enchère classique détectée : initialise tout depuis le début.
+  clearAuctionTimers(room);
+  room.auctionTimerKey = auctionKey;
+  room.auctionStartedAt = Date.now();
+  room.auctionLastBid = auction.currentBid;
+  room.auctionHardDeadline = room.auctionStartedAt + AUCTION_HARD_CAP_MS;
+  resetAuctionResponseTimer(room);
+  room.auctionHardTimer = setTimeout(() => {
+    forceConcludeIfStillSameAuction(room, auctionKey);
+  }, AUCTION_HARD_CAP_MS);
+}
+
+// Enregistre les statistiques de fin de partie, uniquement pour les
+// joueurs connectés à un compte (userId défini) — les invités et les IA
+// ne laissent aucune trace en base.
+function recordGameStatsForRoom(room) {
+  const engine = room.engine;
+  const numPlayers = engine.players.length;
+  room.players.forEach((p) => {
+    if (!p.userId) return;
+    const playerId = room.socketToPlayerId[p.socketId];
+    const player = engine.players[playerId];
+    if (!player) return;
+    const propertiesCount = engine.board.filter((t) => t.owner === playerId).length;
+    const won = !!(engine.winner && engine.winner.id === playerId);
+    try {
+      db.recordGameStats(p.userId, {
+        won: won ? 1 : 0,
+        bankrupt: player.bankrupt ? 1 : 0,
+        finalNetWorth: engine._computeNetWorth(player),
+        finalMoney: player.money,
+        propertiesCount,
+        turnsPlayed: engine.turnNumber,
+        numPlayers,
+        rentPaid: player.stats.rentPaid,
+        rentReceived: player.stats.rentReceived,
+        taxesPaid: player.stats.taxesPaid,
+        timesInJail: player.stats.timesInJail,
+        housesBuilt: player.stats.housesBuilt,
+        tradesCompleted: player.stats.tradesCompleted,
+        auctionsWon: player.stats.auctionsWon,
+        biggestRentPaid: player.stats.biggestRentPaid,
+        loansContracted: player.stats.loansContracted,
+        insuranceBought: player.stats.insuranceBought,
+        salaryCollected: player.stats.salaryCollected,
+      });
+    } catch (err) {
+      console.error("Erreur d'enregistrement des statistiques:", err.message);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -256,18 +454,22 @@ function buildStateForPlayer(baseState, playerId, settings, engine) {
 }
 
 io.on("connection", (socket) => {
-  socket.on("room:create", ({ name } = {}) => {
+  socket.on("room:create", ({ name, token } = {}) => {
     if (socket.data.roomCode) return; // déjà dans un salon
+
+    const authedUser = token ? auth.verifyToken(token) : null;
+    const playerName = authedUser ? authedUser.pseudo : sanitizeName(name);
+    const savedSettings = authedUser ? db.getDefaultSettings(authedUser.userId) : null;
 
     const code = generateRoomCode();
     const room = {
       code,
       hostSocketId: socket.id,
-      players: [{ socketId: socket.id, name: sanitizeName(name), ready: false }],
+      players: [{ socketId: socket.id, name: playerName, ready: false, userId: authedUser ? authedUser.userId : null }],
       engine: null,
       started: false,
       socketToPlayerId: {},
-      settings: buildDefaultSettings(),
+      settings: savedSettings ? { ...buildDefaultSettings(), ...validateSettings(savedSettings) } : buildDefaultSettings(),
       previewBoard: null, // rempli si boardMode === "random" (Phase 8b)
       aiCheckScheduled: false,
     };
@@ -278,7 +480,7 @@ io.on("connection", (socket) => {
     broadcastLobby(room);
   });
 
-  socket.on("room:join", ({ code, name } = {}) => {
+  socket.on("room:join", ({ code, name, token } = {}) => {
     if (socket.data.roomCode) return;
 
     const room = rooms.get((code || "").toString().toUpperCase());
@@ -295,7 +497,10 @@ io.on("connection", (socket) => {
       return;
     }
 
-    room.players.push({ socketId: socket.id, name: sanitizeName(name), ready: false });
+    const authedUser = token ? auth.verifyToken(token) : null;
+    const playerName = authedUser ? authedUser.pseudo : sanitizeName(name);
+
+    room.players.push({ socketId: socket.id, name: playerName, ready: false, userId: authedUser ? authedUser.userId : null });
     socket.join(room.code);
     socket.data.roomCode = room.code;
     broadcastLobby(room);
@@ -431,6 +636,20 @@ io.on("connection", (socket) => {
     }
 
     room.engine.roll();
+    broadcastGame(room);
+  });
+
+  socket.on("game:payJailFine", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.payJailFine(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
     broadcastGame(room);
   });
 

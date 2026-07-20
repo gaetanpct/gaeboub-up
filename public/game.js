@@ -10,6 +10,159 @@ const socket = io();
 
 let myPlayerId = null;
 
+// ============================================================
+// Comptes — jeton auto-suffisant gardé côté navigateur (localStorage).
+// Aucune règle du jeu ici non plus : juste connexion/inscription,
+// pseudo automatique, et lecture des statistiques cumulées.
+// ============================================================
+let authToken = localStorage.getItem("reachup_token") || null;
+let authUser = null; // { id, email, pseudo }
+let authDefaultSettings = null;
+
+async function apiRequest(method, url, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Une erreur est survenue.");
+  return data;
+}
+
+function setAuth(token, user) {
+  authToken = token;
+  authUser = user;
+  if (token) localStorage.setItem("reachup_token", token);
+  else localStorage.removeItem("reachup_token");
+  renderAccountStatus();
+}
+
+function renderAccountStatus() {
+  const el = document.getElementById("account-status");
+  if (authUser) {
+    el.innerHTML = `
+      <p>Connecté(e) en tant que <strong>${authUser.pseudo}</strong></p>
+      <div class="account-status__actions">
+        <button id="btn-open-account-stats" class="btn-text-link" type="button">📊 Mes statistiques</button>
+        <button id="btn-logout" class="btn-text-link" type="button">Déconnexion</button>
+      </div>
+    `;
+    inputName.value = authUser.pseudo;
+    inputName.disabled = true;
+    document.getElementById("btn-open-account-stats").addEventListener("click", openAccountStats);
+    document.getElementById("btn-logout").addEventListener("click", () => setAuth(null, null));
+  } else {
+    el.innerHTML = `<button id="btn-open-auth" class="btn-text-link" type="button">🔐 Connexion / Créer un compte</button>`;
+    inputName.disabled = false;
+    document.getElementById("btn-open-auth").addEventListener("click", () => openAuthModal("login"));
+  }
+}
+
+async function tryRestoreSession() {
+  if (!authToken) {
+    renderAccountStatus();
+    return;
+  }
+  try {
+    const data = await apiRequest("GET", "/api/auth/me");
+    authUser = data.user;
+    authDefaultSettings = data.defaultSettings;
+  } catch {
+    authToken = null;
+    localStorage.removeItem("reachup_token");
+  }
+  renderAccountStatus();
+}
+
+// ---- Fenêtre de connexion / inscription ----
+const authModal = document.getElementById("auth-modal");
+let authMode = "login";
+function openAuthModal(mode) {
+  authMode = mode;
+  document.getElementById("auth-modal-title").textContent = mode === "login" ? "Connexion" : "Créer un compte";
+  document.getElementById("auth-signup-fields").hidden = mode === "login";
+  document.getElementById("btn-auth-submit").textContent = mode === "login" ? "Se connecter" : "Créer mon compte";
+  document.getElementById("btn-auth-switch").textContent =
+    mode === "login" ? "Pas encore de compte ? Créer un compte" : "Déjà un compte ? Se connecter";
+  document.getElementById("auth-error").textContent = "";
+  document.getElementById("auth-email").value = "";
+  document.getElementById("auth-password").value = "";
+  document.getElementById("auth-pseudo").value = "";
+  authModal.hidden = false;
+}
+document.getElementById("btn-close-auth").addEventListener("click", () => { authModal.hidden = true; });
+authModal.addEventListener("click", (e) => { if (e.target === authModal) authModal.hidden = true; });
+document.getElementById("btn-auth-switch").addEventListener("click", () => openAuthModal(authMode === "login" ? "signup" : "login"));
+
+document.getElementById("btn-auth-submit").addEventListener("click", async () => {
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-password").value;
+  const pseudo = document.getElementById("auth-pseudo").value.trim();
+  const errorEl = document.getElementById("auth-error");
+  errorEl.textContent = "";
+  try {
+    const data =
+      authMode === "login"
+        ? await apiRequest("POST", "/api/auth/login", { email, password })
+        : await apiRequest("POST", "/api/auth/signup", { email, password, pseudo });
+    setAuth(data.token, data.user);
+    if (authMode === "login") {
+      const me = await apiRequest("GET", "/api/auth/me");
+      authDefaultSettings = me.defaultSettings;
+    }
+    authModal.hidden = true;
+  } catch (err) {
+    errorEl.textContent = err.message;
+  }
+});
+
+// ---- Fenêtre des statistiques cumulées ----
+async function openAccountStats() {
+  const modal = document.getElementById("account-stats-modal");
+  const content = document.getElementById("account-stats-content");
+  content.innerHTML = "<p class=\"properties-empty\">Chargement...</p>";
+  modal.hidden = false;
+  try {
+    const data = await apiRequest("GET", "/api/auth/stats");
+    const t = data.totals;
+    if (!t || !t.gamesPlayed) {
+      content.innerHTML = "<p class=\"properties-empty\">Aucune partie enregistrée pour l'instant — joue une partie connecté(e) pour commencer à cumuler des statistiques !</p>";
+      return;
+    }
+    const winRate = t.gamesPlayed > 0 ? Math.round((100 * (t.gamesWon || 0)) / t.gamesPlayed) : 0;
+    content.innerHTML = `
+      <h3 class="trade-section-title">Toutes parties confondues</h3>
+      <ul class="reference-list">
+        <li>🎮 Parties jouées : <strong>${t.gamesPlayed}</strong></li>
+        <li>🏆 Victoires : <strong>${t.gamesWon || 0}</strong> (${winRate}%)</li>
+        <li>💥 Faillites : <strong>${t.gamesBankrupt || 0}</strong></li>
+        <li>💰 Meilleure valeur totale atteinte : <strong>${t.bestNetWorthEver || 0}</strong></li>
+        <li>📈 Valeur totale moyenne en fin de partie : <strong>${Math.round(t.avgNetWorth || 0)}</strong></li>
+        <li>🔨 Enchères remportées (total) : <strong>${t.totalAuctionsWon || 0}</strong></li>
+        <li>🤝 Échanges conclus (total) : <strong>${t.totalTradesCompleted || 0}</strong></li>
+        <li>🏠 Maisons construites (total) : <strong>${t.totalHousesBuilt || 0}</strong></li>
+        <li>💵 Loyers perçus (total) : <strong>${t.totalRentReceived || 0}</strong></li>
+        <li>💸 Loyers payés (total) : <strong>${t.totalRentPaid || 0}</strong></li>
+        <li>🚨 Plus gros loyer payé d'un coup : <strong>${t.biggestRentPaidEver || 0}</strong></li>
+        <li>👮 Passages en prison (total) : <strong>${t.totalTimesInJail || 0}</strong></li>
+      </ul>
+      <h3 class="trade-section-title">Dernières parties</h3>
+      <ul class="reference-list">
+        ${data.recent
+          .map(
+            (g) =>
+              `<li>${new Date(g.played_at).toLocaleDateString("fr-FR")} — ${g.won ? "🏆 Victoire" : g.bankrupt ? "💥 Faillite" : "Terminée"}, valeur finale ${g.final_net_worth}, ${g.properties_count} propriété(s), ${g.turns_played} tours</li>`
+          )
+          .join("")}
+      </ul>
+    `;
+  } catch (err) {
+    content.innerHTML = `<p class="error-text">${err.message}</p>`;
+  }
+}
+document.getElementById("btn-close-account-stats").addEventListener("click", () => {
+  document.getElementById("account-stats-modal").hidden = true;
+});
+
 // ---- Gestion des écrans ----
 const screens = {
   home: document.getElementById("screen-home"),
@@ -34,9 +187,11 @@ const btnCreate = document.getElementById("btn-create");
 const btnJoin = document.getElementById("btn-join");
 const homeError = document.getElementById("home-error");
 
+tryRestoreSession();
+
 btnCreate.addEventListener("click", () => {
   homeError.textContent = "";
-  socket.emit("room:create", { name: inputName.value });
+  socket.emit("room:create", { name: inputName.value, token: authToken });
 });
 
 btnJoin.addEventListener("click", () => {
@@ -46,7 +201,7 @@ btnJoin.addEventListener("click", () => {
     return;
   }
   homeError.textContent = "";
-  socket.emit("room:join", { name: inputName.value, code });
+  socket.emit("room:join", { name: inputName.value, code, token: authToken });
 });
 
 socket.on("room:error", (message) => {
@@ -139,14 +294,20 @@ function renderRuleControl(rule, value) {
 }
 
 function renderSettingsForm(settings) {
-  settingsContainer.innerHTML = RULES_SCHEMA.map(
-    (category) => `
+  const saveButtonHtml =
+    authUser && currentIsHost
+      ? `<button id="btn-save-default-settings" class="btn-secondary" type="button">💾 Enregistrer ces réglages comme mes favoris</button>
+         <p id="save-settings-feedback" class="properties-empty"></p>`
+      : "";
+  settingsContainer.innerHTML =
+    RULES_SCHEMA.map(
+      (category) => `
       <fieldset class="settings-category">
         <legend>${category.category}</legend>
         ${category.rules.map((rule) => renderRuleControl(rule, settings[rule.id])).join("")}
       </fieldset>
     `
-  ).join("");
+    ).join("") + saveButtonHtml;
 
   settingsContainer.querySelectorAll("[data-rule-id]").forEach((el) => {
     el.disabled = !currentIsHost;
@@ -161,6 +322,19 @@ function renderSettingsForm(settings) {
       if (textEl) textEl.hidden = !textEl.hidden;
     });
   });
+
+  const saveBtn = document.getElementById("btn-save-default-settings");
+  if (saveBtn) {
+    saveBtn.addEventListener("click", async () => {
+      const feedback = document.getElementById("save-settings-feedback");
+      try {
+        await apiRequest("PUT", "/api/auth/settings", { settings });
+        feedback.textContent = "✅ Réglages enregistrés — ils seront proposés par défaut à ta prochaine partie créée.";
+      } catch (err) {
+        feedback.textContent = `❌ ${err.message}`;
+      }
+    });
+  }
 }
 
 function emitSettingsChange() {
@@ -769,6 +943,36 @@ function renderPlayers(state) {
   }
 }
 
+// Compte à rebours de l'enchère classique : la fenêtre de réponse (repart
+// à 0 à chaque surenchère) ET le plafond absolu de la partie, tous deux
+// fixés par le serveur — le client se contente d'afficher le temps
+// restant jusqu'à ces échéances, sans rien décider lui-même.
+let auctionCountdownInterval = null;
+function stopAuctionCountdown() {
+  if (auctionCountdownInterval) {
+    clearInterval(auctionCountdownInterval);
+    auctionCountdownInterval = null;
+  }
+}
+function startAuctionCountdown(auction) {
+  stopAuctionCountdown();
+  if (!auction.responseDeadline) return;
+  const tick = () => {
+    const el = document.getElementById("auction-countdown");
+    if (!el) {
+      stopAuctionCountdown();
+      return;
+    }
+    const responseLeft = Math.max(0, Math.ceil((auction.responseDeadline - Date.now()) / 1000));
+    const hardLeft = auction.hardDeadline ? Math.max(0, Math.ceil((auction.hardDeadline - Date.now()) / 1000)) : null;
+    const displayed = hardLeft !== null ? Math.min(responseLeft, hardLeft) : responseLeft;
+    el.textContent = `⏱️ ${displayed}s avant que l'enchère ne se conclue toute seule`;
+    el.classList.toggle("auction-countdown--urgent", displayed <= 3);
+  };
+  tick();
+  auctionCountdownInterval = setInterval(tick, 250);
+}
+
 function renderActionArea(state) {
   const preserved = captureFormValues(actionArea);
   actionArea.innerHTML = "";
@@ -860,11 +1064,24 @@ function renderActionArea(state) {
         box.innerHTML = `
           <p>🔨 Enchère classique sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
           <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
-          <input type="number" id="auction-raise-input" min="${minBid}" value="${minBid}" class="auction-input" />
-          <button id="btn-raise-bid" class="btn-primary">Enchérir</button>
+          <p id="auction-countdown" class="auction-countdown"></p>
+          <div class="quick-bid-row">
+            <button class="btn-quick-bid" data-quick-bid="10">+10</button>
+            <button class="btn-quick-bid" data-quick-bid="50">+50</button>
+            <button class="btn-quick-bid" data-quick-bid="100">+100</button>
+          </div>
+          <div class="trade-form">
+            <input type="number" id="auction-raise-input" min="${minBid}" value="${minBid}" class="auction-input" />
+            <button id="btn-raise-bid">Enchérir ce montant précis</button>
+          </div>
           <button id="btn-pass-bid">Passer</button>
         `;
         actionArea.appendChild(box);
+        box.querySelectorAll(".btn-quick-bid").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            socket.emit("game:auctionRaise", { amount: auction.currentBid + Number(btn.dataset.quickBid) });
+          });
+        });
         document.getElementById("btn-raise-bid").addEventListener("click", () => {
           const amount = Number(document.getElementById("auction-raise-input").value) || 0;
           socket.emit("game:auctionRaise", { amount });
@@ -877,12 +1094,16 @@ function renderActionArea(state) {
         box.innerHTML = `
           <p>🔨 Enchère classique sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong></p>
           <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
+          <p id="auction-countdown" class="auction-countdown"></p>
           <p class="action-box--waiting">Au tour de ${turnName}...</p>
         `;
         actionArea.appendChild(box);
       }
+      startAuctionCountdown(auction);
       return;
     }
+
+    stopAuctionCountdown();
 
     // mode "secret"
     if (state.pendingAuction.pendingPlayers.includes(myPlayerId)) {
@@ -942,6 +1163,21 @@ function renderActionArea(state) {
   if (isMyTurn) {
     const box = document.createElement("div");
     box.className = "action-box";
+    const me = state.players.find((p) => p.id === myPlayerId);
+    if (me && me.inJail) {
+      const canAfford = me.money >= 50;
+      box.innerHTML = `
+        <p>🔒 Tu es en prison. Paie 50 pour sortir tout de suite, ou tente ta chance : un double te libère et te déplace directement du nombre de cases obtenu.</p>
+        <button id="btn-pay-jail" class="btn-primary" ${canAfford ? "" : "disabled"}>💰 Payer 50 et sortir</button>
+        <button id="btn-roll" class="btn-secondary">🎲 Lancer les dés (tenter un double)</button>
+        ${canAfford ? "" : '<p class="properties-empty">Pas assez d\'argent pour payer l\'amende.</p>'}
+      `;
+      actionArea.appendChild(box);
+      const payBtn = document.getElementById("btn-pay-jail");
+      if (canAfford) payBtn.addEventListener("click", () => socket.emit("game:payJailFine"));
+      document.getElementById("btn-roll").addEventListener("click", () => socket.emit("game:roll"));
+      return;
+    }
     box.innerHTML = `<button id="btn-roll" class="btn-primary">🎲 Lancer les dés</button>`;
     actionArea.appendChild(box);
     document.getElementById("btn-roll").addEventListener("click", () => {

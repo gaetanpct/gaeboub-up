@@ -1047,26 +1047,19 @@
     }
 
     _tickWorldEvent() {
-      if (this.activeEvent) {
-        this.activeEvent.turnsRemaining -= 1;
-        if (this.activeEvent.turnsRemaining <= 0) {
-          const ended = WORLD_EVENTS.find((e) => e.id === this.activeEvent.id);
-          if (this.activeEvent.id === "rank_reversal") this.turnDirection = 1;
-          if (this.activeEvent.id === "property_shuffle" && this.activeEvent.originalOwnership) {
-            Object.entries(this.activeEvent.originalOwnership).forEach(([index, ownerId]) => {
-              this.board[Number(index)].owner = ownerId;
-            });
-            this.addLog(`🔀 Les propriétés reviennent à leurs propriétaires d'origine.`);
-          }
-          this.addLog(`${ended.icon} L'événement "${ended.name}" est terminé.`);
-          this.activeEvent = null;
+      if (!this.activeEvent) return;
+      this.activeEvent.turnsRemaining -= 1;
+      if (this.activeEvent.turnsRemaining <= 0) {
+        const ended = WORLD_EVENTS.find((e) => e.id === this.activeEvent.id);
+        if (this.activeEvent.id === "rank_reversal") this.turnDirection = 1;
+        if (this.activeEvent.id === "property_shuffle" && this.activeEvent.originalOwnership) {
+          Object.entries(this.activeEvent.originalOwnership).forEach(([index, ownerId]) => {
+            this.board[Number(index)].owner = ownerId;
+          });
+          this.addLog(`🔀 Les propriétés reviennent à leurs propriétaires d'origine.`);
         }
-        return;
-      }
-      if (!this.worldEventsEnabled) return;
-      const probability = FREQUENCY_PROBABILITY[this.worldEventFrequency] || FREQUENCY_PROBABILITY.normal;
-      if (Math.random() < probability) {
-        this._startRandomWorldEvent();
+        this.addLog(`${ended.icon} L'événement "${ended.name}" est terminé.`);
+        this.activeEvent = null;
       }
     }
 
@@ -1078,25 +1071,42 @@
         player.jailFreeCards -= 1;
         player.inJail = false;
         this.addLog(`${player.name} utilise une carte "sortie de prison gratuite".`);
-        return true;
+        return { freed: true, moveWithRoll: null };
       }
       const [d1, d2] = this.rollDice();
       this.lastRoll = { playerId: player.id, d1, d2, isDouble: d1 === d2, inJailRoll: true };
       this.addLog(`${player.name} lance les dés en prison : ${d1} et ${d2}.`);
       if (d1 === d2) {
         player.inJail = false;
-        this.addLog(`Double ! ${player.name} sort de prison.`);
-        return true;
+        this.addLog(`Double ! ${player.name} sort de prison et avance directement de ${d1 + d2} case(s).`);
+        return { freed: true, moveWithRoll: d1 + d2 };
       }
       player.jailTurns += 1;
       if (player.jailTurns >= MAX_JAIL_TURNS) {
         this.pay(player, null, JAIL_FINE);
         player.inJail = false;
-        this.addLog(`${player.name} paie l'amende de ${JAIL_FINE} et sort de prison.`);
-        return true;
+        this.addLog(`${player.name} paie l'amende de ${JAIL_FINE} (3e tentative) et sort de prison.`);
+        return { freed: true, moveWithRoll: null };
       }
       this.addLog(`${player.name} reste en prison.`);
-      return false;
+      return { freed: false, moveWithRoll: null };
+    }
+
+    // Bouton "Payer et sortir" : à tout moment durant son tour en prison
+    // (pas besoin d'attendre 3 tentatives ratées). Une fois libre, il peut
+    // ensuite appeler roll() normalement s'il le souhaite, dans le même tour.
+    payJailFine(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce n'est possible qu'à ton tour." };
+      if (!player.inJail) return { ok: false, reason: "Tu n'es pas en prison." };
+      if (player.money < JAIL_FINE) return { ok: false, reason: "Pas assez d'argent pour payer l'amende." };
+
+      this.pay(player, null, JAIL_FINE);
+      player.inJail = false;
+      player.jailTurns = 0;
+      this.addLog(`${player.name} paie l'amende de ${JAIL_FINE} et sort de prison.`);
+      return { ok: true };
     }
 
     // Ce qui se passe une fois qu'un lancer est totalement résolu
@@ -1155,13 +1165,22 @@
       }
 
       if (player.inJail) {
-        const freed = this._attemptJailExit(player);
-        this.checkBankruptcy(player);
-        if (player.inDebt) {
-          this._pendingTurnContinuation = () => this._finishJailRoll(freed);
+        const result = this._attemptJailExit(player);
+        if (result.moveWithRoll !== null) {
+          // Sortie par un double : ce lancer sert directement au déplacement.
+          const newPosition = (player.position + result.moveWithRoll) % this.board.length;
+          this.moveTo(player, newPosition, true);
+          const tile = this.board[player.position];
+          this.addLog(`${player.name} arrive sur "${tile.name}".`);
+          this._resolveLandedTile(player, tile, false, result.moveWithRoll);
           return;
         }
-        this._finishJailRoll(freed);
+        this.checkBankruptcy(player);
+        if (player.inDebt) {
+          this._pendingTurnContinuation = () => this._finishJailRoll(result.freed);
+          return;
+        }
+        this._finishJailRoll(result.freed);
         // Si freed === true, le joueur garde son tour : il doit rappeler
         // roll() pour effectuer son déplacement (comportement volontaire,
         // cf. explications de la Phase 3).
@@ -1523,6 +1542,19 @@
 
       if (auction.turnIndex >= auction.activeBidders.length) auction.turnIndex = 0;
       return { ok: true };
+    }
+
+    // Conclut immédiatement une enchère classique par expiration du temps
+    // (le chronométrage lui-même vit côté serveur — le moteur reste
+    // synchrone et testable sans dépendre du temps réel). Le plus offrant
+    // actuel remporte la case ; si personne n'a encore misé, elle reste
+    // libre.
+    forceEndClassicAuction() {
+      if (!this.pendingAuction || this.pendingAuction.mode !== "classic") return;
+      const auction = this.pendingAuction;
+      const winnerId = auction.currentBid > 0 ? auction.currentBidderId : null;
+      this.addLog(`⏱️ Temps écoulé sur l'enchère de ${this.board[auction.tileIndex].name}.`);
+      this._concludeAuction(winnerId, auction.currentBid);
     }
 
     // Conclut n'importe quelle enchère (secrète ou classique) : attribue
