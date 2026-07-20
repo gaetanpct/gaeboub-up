@@ -10,159 +10,6 @@ const socket = io();
 
 let myPlayerId = null;
 
-// ============================================================
-// Comptes — jeton auto-suffisant gardé côté navigateur (localStorage).
-// Aucune règle du jeu ici non plus : juste connexion/inscription,
-// pseudo automatique, et lecture des statistiques cumulées.
-// ============================================================
-let authToken = localStorage.getItem("reachup_token") || null;
-let authUser = null; // { id, email, pseudo }
-let authDefaultSettings = null;
-
-async function apiRequest(method, url, body) {
-  const headers = { "Content-Type": "application/json" };
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
-  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Une erreur est survenue.");
-  return data;
-}
-
-function setAuth(token, user) {
-  authToken = token;
-  authUser = user;
-  if (token) localStorage.setItem("reachup_token", token);
-  else localStorage.removeItem("reachup_token");
-  renderAccountStatus();
-}
-
-function renderAccountStatus() {
-  const el = document.getElementById("account-status");
-  if (authUser) {
-    el.innerHTML = `
-      <p>Connecté(e) en tant que <strong>${authUser.pseudo}</strong></p>
-      <div class="account-status__actions">
-        <button id="btn-open-account-stats" class="btn-text-link" type="button">📊 Mes statistiques</button>
-        <button id="btn-logout" class="btn-text-link" type="button">Déconnexion</button>
-      </div>
-    `;
-    inputName.value = authUser.pseudo;
-    inputName.disabled = true;
-    document.getElementById("btn-open-account-stats").addEventListener("click", openAccountStats);
-    document.getElementById("btn-logout").addEventListener("click", () => setAuth(null, null));
-  } else {
-    el.innerHTML = `<button id="btn-open-auth" class="btn-text-link" type="button">🔐 Connexion / Créer un compte</button>`;
-    inputName.disabled = false;
-    document.getElementById("btn-open-auth").addEventListener("click", () => openAuthModal("login"));
-  }
-}
-
-async function tryRestoreSession() {
-  if (!authToken) {
-    renderAccountStatus();
-    return;
-  }
-  try {
-    const data = await apiRequest("GET", "/api/auth/me");
-    authUser = data.user;
-    authDefaultSettings = data.defaultSettings;
-  } catch {
-    authToken = null;
-    localStorage.removeItem("reachup_token");
-  }
-  renderAccountStatus();
-}
-
-// ---- Fenêtre de connexion / inscription ----
-const authModal = document.getElementById("auth-modal");
-let authMode = "login";
-function openAuthModal(mode) {
-  authMode = mode;
-  document.getElementById("auth-modal-title").textContent = mode === "login" ? "Connexion" : "Créer un compte";
-  document.getElementById("auth-signup-fields").hidden = mode === "login";
-  document.getElementById("btn-auth-submit").textContent = mode === "login" ? "Se connecter" : "Créer mon compte";
-  document.getElementById("btn-auth-switch").textContent =
-    mode === "login" ? "Pas encore de compte ? Créer un compte" : "Déjà un compte ? Se connecter";
-  document.getElementById("auth-error").textContent = "";
-  document.getElementById("auth-email").value = "";
-  document.getElementById("auth-password").value = "";
-  document.getElementById("auth-pseudo").value = "";
-  authModal.hidden = false;
-}
-document.getElementById("btn-close-auth").addEventListener("click", () => { authModal.hidden = true; });
-authModal.addEventListener("click", (e) => { if (e.target === authModal) authModal.hidden = true; });
-document.getElementById("btn-auth-switch").addEventListener("click", () => openAuthModal(authMode === "login" ? "signup" : "login"));
-
-document.getElementById("btn-auth-submit").addEventListener("click", async () => {
-  const email = document.getElementById("auth-email").value.trim();
-  const password = document.getElementById("auth-password").value;
-  const pseudo = document.getElementById("auth-pseudo").value.trim();
-  const errorEl = document.getElementById("auth-error");
-  errorEl.textContent = "";
-  try {
-    const data =
-      authMode === "login"
-        ? await apiRequest("POST", "/api/auth/login", { email, password })
-        : await apiRequest("POST", "/api/auth/signup", { email, password, pseudo });
-    setAuth(data.token, data.user);
-    if (authMode === "login") {
-      const me = await apiRequest("GET", "/api/auth/me");
-      authDefaultSettings = me.defaultSettings;
-    }
-    authModal.hidden = true;
-  } catch (err) {
-    errorEl.textContent = err.message;
-  }
-});
-
-// ---- Fenêtre des statistiques cumulées ----
-async function openAccountStats() {
-  const modal = document.getElementById("account-stats-modal");
-  const content = document.getElementById("account-stats-content");
-  content.innerHTML = "<p class=\"properties-empty\">Chargement...</p>";
-  modal.hidden = false;
-  try {
-    const data = await apiRequest("GET", "/api/auth/stats");
-    const t = data.totals;
-    if (!t || !t.gamesPlayed) {
-      content.innerHTML = "<p class=\"properties-empty\">Aucune partie enregistrée pour l'instant — joue une partie connecté(e) pour commencer à cumuler des statistiques !</p>";
-      return;
-    }
-    const winRate = t.gamesPlayed > 0 ? Math.round((100 * (t.gamesWon || 0)) / t.gamesPlayed) : 0;
-    content.innerHTML = `
-      <h3 class="trade-section-title">Toutes parties confondues</h3>
-      <ul class="reference-list">
-        <li>🎮 Parties jouées : <strong>${t.gamesPlayed}</strong></li>
-        <li>🏆 Victoires : <strong>${t.gamesWon || 0}</strong> (${winRate}%)</li>
-        <li>💥 Faillites : <strong>${t.gamesBankrupt || 0}</strong></li>
-        <li>💰 Meilleure valeur totale atteinte : <strong>${t.bestNetWorthEver || 0}</strong></li>
-        <li>📈 Valeur totale moyenne en fin de partie : <strong>${Math.round(t.avgNetWorth || 0)}</strong></li>
-        <li>🔨 Enchères remportées (total) : <strong>${t.totalAuctionsWon || 0}</strong></li>
-        <li>🤝 Échanges conclus (total) : <strong>${t.totalTradesCompleted || 0}</strong></li>
-        <li>🏠 Maisons construites (total) : <strong>${t.totalHousesBuilt || 0}</strong></li>
-        <li>💵 Loyers perçus (total) : <strong>${t.totalRentReceived || 0}</strong></li>
-        <li>💸 Loyers payés (total) : <strong>${t.totalRentPaid || 0}</strong></li>
-        <li>🚨 Plus gros loyer payé d'un coup : <strong>${t.biggestRentPaidEver || 0}</strong></li>
-        <li>👮 Passages en prison (total) : <strong>${t.totalTimesInJail || 0}</strong></li>
-      </ul>
-      <h3 class="trade-section-title">Dernières parties</h3>
-      <ul class="reference-list">
-        ${data.recent
-          .map(
-            (g) =>
-              `<li>${new Date(g.played_at).toLocaleDateString("fr-FR")} — ${g.won ? "🏆 Victoire" : g.bankrupt ? "💥 Faillite" : "Terminée"}, valeur finale ${g.final_net_worth}, ${g.properties_count} propriété(s), ${g.turns_played} tours</li>`
-          )
-          .join("")}
-      </ul>
-    `;
-  } catch (err) {
-    content.innerHTML = `<p class="error-text">${err.message}</p>`;
-  }
-}
-document.getElementById("btn-close-account-stats").addEventListener("click", () => {
-  document.getElementById("account-stats-modal").hidden = true;
-});
-
 // ---- Gestion des écrans ----
 const screens = {
   home: document.getElementById("screen-home"),
@@ -187,11 +34,9 @@ const btnCreate = document.getElementById("btn-create");
 const btnJoin = document.getElementById("btn-join");
 const homeError = document.getElementById("home-error");
 
-tryRestoreSession();
-
 btnCreate.addEventListener("click", () => {
   homeError.textContent = "";
-  socket.emit("room:create", { name: inputName.value, token: authToken });
+  socket.emit("room:create", { name: inputName.value });
 });
 
 btnJoin.addEventListener("click", () => {
@@ -201,7 +46,7 @@ btnJoin.addEventListener("click", () => {
     return;
   }
   homeError.textContent = "";
-  socket.emit("room:join", { name: inputName.value, code, token: authToken });
+  socket.emit("room:join", { name: inputName.value, code });
 });
 
 socket.on("room:error", (message) => {
@@ -294,20 +139,14 @@ function renderRuleControl(rule, value) {
 }
 
 function renderSettingsForm(settings) {
-  const saveButtonHtml =
-    authUser && currentIsHost
-      ? `<button id="btn-save-default-settings" class="btn-secondary" type="button">💾 Enregistrer ces réglages comme mes favoris</button>
-         <p id="save-settings-feedback" class="properties-empty"></p>`
-      : "";
-  settingsContainer.innerHTML =
-    RULES_SCHEMA.map(
-      (category) => `
+  settingsContainer.innerHTML = RULES_SCHEMA.map(
+    (category) => `
       <fieldset class="settings-category">
         <legend>${category.category}</legend>
         ${category.rules.map((rule) => renderRuleControl(rule, settings[rule.id])).join("")}
       </fieldset>
     `
-    ).join("") + saveButtonHtml;
+  ).join("");
 
   settingsContainer.querySelectorAll("[data-rule-id]").forEach((el) => {
     el.disabled = !currentIsHost;
@@ -322,19 +161,6 @@ function renderSettingsForm(settings) {
       if (textEl) textEl.hidden = !textEl.hidden;
     });
   });
-
-  const saveBtn = document.getElementById("btn-save-default-settings");
-  if (saveBtn) {
-    saveBtn.addEventListener("click", async () => {
-      const feedback = document.getElementById("save-settings-feedback");
-      try {
-        await apiRequest("PUT", "/api/auth/settings", { settings });
-        feedback.textContent = "✅ Réglages enregistrés — ils seront proposés par défaut à ta prochaine partie créée.";
-      } catch (err) {
-        feedback.textContent = `❌ ${err.message}`;
-      }
-    });
-  }
 }
 
 function emitSettingsChange() {
@@ -965,14 +791,8 @@ function startAuctionCountdown(auction) {
     }
     const responseLeft = Math.max(0, Math.ceil((auction.responseDeadline - Date.now()) / 1000));
     const hardLeft = auction.hardDeadline ? Math.max(0, Math.ceil((auction.hardDeadline - Date.now()) / 1000)) : null;
-    el.innerHTML = `
-      <p class="auction-countdown ${responseLeft <= 3 ? "auction-countdown--urgent" : ""}">⏱️ ${responseLeft}s avant conclusion si personne ne surenchérit (repart à 0 à chaque mise)</p>
-      ${
-        hardLeft !== null
-          ? `<p class="auction-countdown ${hardLeft <= 5 ? "auction-countdown--urgent" : ""}">⏳ ${hardLeft}s avant la fin définitive de l'enchère (ne repart jamais à 0)</p>`
-          : ""
-      }
-    `;
+    const urgent = responseLeft <= 3 || (hardLeft !== null && hardLeft <= 5);
+    el.innerHTML = `<p class="auction-countdown ${urgent ? "auction-countdown--urgent" : ""}">⏱️ ${responseLeft}s${hardLeft !== null ? ` · ⏳ ${hardLeft}s max` : ""}</p>`;
   };
   tick();
   auctionCountdownInterval = setInterval(tick, 250);
@@ -1062,28 +882,32 @@ function renderActionArea(state) {
     if (state.pendingAuction.mode === "classic") {
       const auction = state.pendingAuction;
       const box = document.createElement("div");
-      box.className = "action-box";
+      box.className = "action-box action-box--compact";
 
       const iAmEligible = (auction.eligibleBidders || []).includes(myPlayerId);
       const iAmLeading = auction.currentBidderId === myPlayerId;
+      const bidderName = auction.currentBidderId !== null ? state.players[auction.currentBidderId].name : null;
+
+      const headerHtml = `
+        <p class="auction-header">🔨 <strong>${tile.short || tile.name}</strong> — mise : <strong>${auction.currentBid}</strong>${bidderName ? ` (${bidderName})` : ""}</p>
+        <div id="auction-countdowns" class="auction-countdowns"></div>
+      `;
 
       if (iAmEligible) {
         const minBid = auction.currentBid + 1;
         box.innerHTML = `
-          <p>🔨 Enchère classique sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong> (prix normal : ${tile.price})</p>
-          <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
-          <p class="properties-empty">Libre à toi de surenchérir dès que tu veux — pas besoin d'attendre ton tour.</p>
-          <div id="auction-countdowns" class="auction-countdowns"></div>
+          ${headerHtml}
           <div class="quick-bid-row">
             <button class="btn-quick-bid" data-quick-bid="10">+10</button>
             <button class="btn-quick-bid" data-quick-bid="50">+50</button>
             <button class="btn-quick-bid" data-quick-bid="100">+100</button>
           </div>
-          <div class="trade-form">
+          <details class="auction-custom-bid">
+            <summary>Montant précis...</summary>
             <input type="number" id="auction-raise-input" min="${minBid}" value="${minBid}" class="auction-input" />
-            <button id="btn-raise-bid">Enchérir ce montant précis</button>
-          </div>
-          <button id="btn-pass-bid">Me retirer de l'enchère</button>
+            <button id="btn-raise-bid">OK</button>
+          </details>
+          <button id="btn-pass-bid" class="btn-text-link">Me retirer</button>
         `;
         actionArea.appendChild(box);
         box.querySelectorAll(".btn-quick-bid").forEach((btn) => {
@@ -1099,13 +923,9 @@ function renderActionArea(state) {
           socket.emit("game:auctionPass");
         });
       } else {
-        const waitingMessage = iAmLeading
-          ? "Tu es le meilleur enchérisseur pour l'instant : attends qu'un autre joueur surenchérisse (ou que le temps s'écoule)."
-          : "Tu ne participes plus à cette enchère.";
+        const waitingMessage = iAmLeading ? "Meilleure mise pour l'instant, en attente..." : "Tu ne participes plus.";
         box.innerHTML = `
-          <p>🔨 Enchère classique sur ${ReachUpBoardView.tileSwatch(tile)} <strong>${tile.name}</strong></p>
-          <p>Mise actuelle : <strong>${auction.currentBid}</strong>${auction.currentBidderId !== null ? ` (par ${state.players[auction.currentBidderId].name})` : ""}</p>
-          <div id="auction-countdowns" class="auction-countdowns"></div>
+          ${headerHtml}
           <p class="action-box--waiting">${waitingMessage}</p>
         `;
         actionArea.appendChild(box);
@@ -1864,6 +1684,7 @@ function renderTradeModal() {
 
   const incoming = latestGameState.tradeOffers.filter((t) => t.toId === myPlayerId);
   const outgoing = latestGameState.tradeOffers.filter((t) => t.fromId === myPlayerId);
+  const bystanderTrades = latestGameState.tradeOffers.filter((t) => t.toId !== myPlayerId && t.fromId !== myPlayerId);
 
   const formHtml =
     others.length === 0
@@ -1892,9 +1713,11 @@ function renderTradeModal() {
   tradeContent.innerHTML = `
     ${formHtml}
     <h3 class="trade-section-title">📬 Offres reçues</h3>
-    ${incoming.length === 0 ? `<p class="properties-empty">Aucune offre reçue.</p>` : incoming.map((t) => renderTradeRow(t, true)).join("")}
+    ${incoming.length === 0 ? `<p class="properties-empty">Aucune offre reçue.</p>` : incoming.map((t) => renderTradeRow(t, "incoming")).join("")}
     <h3 class="trade-section-title">📤 Tes propositions envoyées</h3>
-    ${outgoing.length === 0 ? `<p class="properties-empty">Aucune proposition envoyée.</p>` : outgoing.map((t) => renderTradeRow(t, false)).join("")}
+    ${outgoing.length === 0 ? `<p class="properties-empty">Aucune proposition envoyée.</p>` : outgoing.map((t) => renderTradeRow(t, "outgoing")).join("")}
+    <h3 class="trade-section-title">👀 Échanges entre les autres joueurs</h3>
+    ${bystanderTrades.length === 0 ? `<p class="properties-empty">Aucun échange en cours entre les autres joueurs.</p>` : bystanderTrades.map((t) => renderTradeRow(t, "observer")).join("")}
   `;
 
   const targetSelect = document.getElementById("trade-target");
@@ -1938,15 +1761,19 @@ function propertiesModalWireTradeButtons() {
   });
 }
 
-function renderTradeRow(trade, isIncoming) {
+function renderTradeRow(trade, mode) {
   const fromPlayer = latestGameState.players[trade.fromId];
   const toPlayer = latestGameState.players[trade.toId];
+  const isIncoming = mode === "incoming";
+  const isObserver = mode === "observer";
 
   if (trade.hidden) {
     // Négociation secrète : on ne connaît pas le contenu, seulement qui propose.
     // On suppose que les joueurs se sont mis d'accord en dehors du jeu.
     const description = isIncoming
       ? `<strong>${fromPlayer.name}</strong> te propose un échange 🤫 <em>(négocié ailleurs — fie-toi à ce que vous avez convenu)</em>`
+      : isObserver
+      ? `<strong>${fromPlayer.name}</strong> → <strong>${toPlayer.name}</strong> : échange en cours 🤫`
       : `À <strong>${toPlayer.name}</strong> : échange en cours 🤫`;
     const actions = isIncoming
       ? `<button data-accept-trade="${trade.id}" class="btn-primary">Accepter</button>
@@ -1967,11 +1794,15 @@ function renderTradeRow(trade, isIncoming) {
 
   const description = isIncoming
     ? `<strong>${fromPlayer.name}</strong> te propose : ${offerNames.join(", ") || "rien"} contre ${requestNames.join(", ") || "rien"}`
+    : isObserver
+    ? `<strong>${fromPlayer.name}</strong> → <strong>${toPlayer.name}</strong> : ${offerNames.join(", ") || "rien"} contre ${requestNames.join(", ") || "rien"}`
     : `À <strong>${toPlayer.name}</strong> : ${offerNames.join(", ") || "rien"} contre ${requestNames.join(", ") || "rien"}`;
 
   const actions = isIncoming
     ? `<button data-accept-trade="${trade.id}" class="btn-primary">Accepter</button>
        <button data-reject-trade="${trade.id}">Refuser</button>`
+    : isObserver
+    ? ""
     : `<button data-cancel-trade="${trade.id}">Annuler</button>`;
 
   return `

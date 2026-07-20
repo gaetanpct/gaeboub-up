@@ -16,82 +16,15 @@ const { GameEngine } = require(path.join(__dirname, "public", "game", "engine.js
 const { buildDefaultSettings, validateSettings } = require(path.join(__dirname, "public", "game", "rules-schema.js"));
 const { generateBoard } = require(path.join(__dirname, "public", "game", "board-generator.js"));
 const AI = require(path.join(__dirname, "public", "game", "ai.js"));
-const db = require(path.join(__dirname, "db.js"));
-const auth = require(path.join(__dirname, "auth.js"));
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// ---------------------------------------------------------------------
-// Comptes — routes REST (indépendantes des salons/parties en temps réel)
-// ---------------------------------------------------------------------
-function requireAuth(req, res, next) {
-  const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-  const payload = token ? auth.verifyToken(token) : null;
-  if (!payload) return res.status(401).json({ error: "Non connecté." });
-  req.userId = payload.userId;
-  next();
-}
-
-app.post("/api/auth/signup", (req, res) => {
-  const { email, password, pseudo } = req.body || {};
-  if (!auth.isValidEmail(email)) return res.status(400).json({ error: "Adresse email invalide." });
-  if (!auth.isValidPassword(password)) return res.status(400).json({ error: "Le mot de passe doit contenir au moins 6 caractères." });
-  if (!auth.isValidPseudo(pseudo)) return res.status(400).json({ error: "Le pseudo doit contenir entre 2 et 20 caractères." });
-
-  if (db.getUserByEmail(email)) {
-    return res.status(409).json({ error: "Un compte existe déjà avec cette adresse email." });
-  }
-
-  const user = db.createUser({ email, passwordHash: auth.hashPassword(password), pseudo: pseudo.trim().slice(0, 20) });
-  const token = auth.signToken(user);
-  res.json({ token, user: { id: user.id, email: user.email, pseudo: user.pseudo } });
-});
-
-app.post("/api/auth/login", (req, res) => {
-  const { email, password } = req.body || {};
-  const user = db.getUserByEmail(email || "");
-  if (!user || !auth.verifyPassword(password || "", user.password_hash)) {
-    return res.status(401).json({ error: "Adresse email ou mot de passe incorrect." });
-  }
-  const token = auth.signToken(user);
-  res.json({ token, user: { id: user.id, email: user.email, pseudo: user.pseudo } });
-});
-
-app.get("/api/auth/me", requireAuth, (req, res) => {
-  const user = db.getUserById(req.userId);
-  if (!user) return res.status(404).json({ error: "Compte introuvable." });
-  res.json({
-    user: { id: user.id, email: user.email, pseudo: user.pseudo },
-    defaultSettings: db.getDefaultSettings(user.id),
-  });
-});
-
-app.put("/api/auth/pseudo", requireAuth, (req, res) => {
-  const { pseudo } = req.body || {};
-  if (!auth.isValidPseudo(pseudo)) return res.status(400).json({ error: "Le pseudo doit contenir entre 2 et 20 caractères." });
-  db.updatePseudo(req.userId, pseudo.trim().slice(0, 20));
-  res.json({ ok: true });
-});
-
-app.put("/api/auth/settings", requireAuth, (req, res) => {
-  const { settings } = req.body || {};
-  if (!settings || typeof settings !== "object") return res.status(400).json({ error: "Réglages invalides." });
-  db.updateDefaultSettings(req.userId, settings);
-  res.json({ ok: true });
-});
-
-app.get("/api/auth/stats", requireAuth, (req, res) => {
-  res.json(db.getAggregateStats(req.userId));
-});
-
 const MIN_PLAYERS = 2;
-const MAX_PLAYERS = 4;
+const MAX_PLAYERS = 5;
 
 // Toutes les parties en cours vivent en mémoire du serveur.
 // (Elles disparaissent si le serveur redémarre — normal pour ce stade du projet.)
@@ -185,11 +118,6 @@ function broadcastGame(room) {
     io.to(p.socketId).emit("game:update", { state: stateForPlayer, settings: room.settings });
   });
 
-  if (room.engine.gameOver && !room.statsRecorded) {
-    room.statsRecorded = true;
-    recordGameStatsForRoom(room);
-  }
-
   scheduleAICheck(room);
 }
 
@@ -265,46 +193,6 @@ function scheduleAuctionTimer(room) {
   room.auctionHardTimer = setTimeout(() => {
     forceConcludeIfStillSameAuction(room, auctionKey);
   }, AUCTION_HARD_CAP_MS);
-}
-
-// Enregistre les statistiques de fin de partie, uniquement pour les
-// joueurs connectés à un compte (userId défini) — les invités et les IA
-// ne laissent aucune trace en base.
-function recordGameStatsForRoom(room) {
-  const engine = room.engine;
-  const numPlayers = engine.players.length;
-  room.players.forEach((p) => {
-    if (!p.userId) return;
-    const playerId = room.socketToPlayerId[p.socketId];
-    const player = engine.players[playerId];
-    if (!player) return;
-    const propertiesCount = engine.board.filter((t) => t.owner === playerId).length;
-    const won = !!(engine.winner && engine.winner.id === playerId);
-    try {
-      db.recordGameStats(p.userId, {
-        won: won ? 1 : 0,
-        bankrupt: player.bankrupt ? 1 : 0,
-        finalNetWorth: engine._computeNetWorth(player),
-        finalMoney: player.money,
-        propertiesCount,
-        turnsPlayed: engine.turnNumber,
-        numPlayers,
-        rentPaid: player.stats.rentPaid,
-        rentReceived: player.stats.rentReceived,
-        taxesPaid: player.stats.taxesPaid,
-        timesInJail: player.stats.timesInJail,
-        housesBuilt: player.stats.housesBuilt,
-        tradesCompleted: player.stats.tradesCompleted,
-        auctionsWon: player.stats.auctionsWon,
-        biggestRentPaid: player.stats.biggestRentPaid,
-        loansContracted: player.stats.loansContracted,
-        insuranceBought: player.stats.insuranceBought,
-        salaryCollected: player.stats.salaryCollected,
-      });
-    } catch (err) {
-      console.error("Erreur d'enregistrement des statistiques:", err.message);
-    }
-  });
 }
 
 // ---------------------------------------------------------------------
@@ -457,22 +345,18 @@ function buildStateForPlayer(baseState, playerId, settings, engine) {
 }
 
 io.on("connection", (socket) => {
-  socket.on("room:create", ({ name, token } = {}) => {
+  socket.on("room:create", ({ name } = {}) => {
     if (socket.data.roomCode) return; // déjà dans un salon
-
-    const authedUser = token ? auth.verifyToken(token) : null;
-    const playerName = authedUser ? authedUser.pseudo : sanitizeName(name);
-    const savedSettings = authedUser ? db.getDefaultSettings(authedUser.userId) : null;
 
     const code = generateRoomCode();
     const room = {
       code,
       hostSocketId: socket.id,
-      players: [{ socketId: socket.id, name: playerName, ready: false, userId: authedUser ? authedUser.userId : null }],
+      players: [{ socketId: socket.id, name: sanitizeName(name), ready: false }],
       engine: null,
       started: false,
       socketToPlayerId: {},
-      settings: savedSettings ? { ...buildDefaultSettings(), ...validateSettings(savedSettings) } : buildDefaultSettings(),
+      settings: buildDefaultSettings(),
       previewBoard: null, // rempli si boardMode === "random" (Phase 8b)
       aiCheckScheduled: false,
     };
@@ -483,7 +367,7 @@ io.on("connection", (socket) => {
     broadcastLobby(room);
   });
 
-  socket.on("room:join", ({ code, name, token } = {}) => {
+  socket.on("room:join", ({ code, name } = {}) => {
     if (socket.data.roomCode) return;
 
     const room = rooms.get((code || "").toString().toUpperCase());
@@ -500,10 +384,7 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const authedUser = token ? auth.verifyToken(token) : null;
-    const playerName = authedUser ? authedUser.pseudo : sanitizeName(name);
-
-    room.players.push({ socketId: socket.id, name: playerName, ready: false, userId: authedUser ? authedUser.userId : null });
+    room.players.push({ socketId: socket.id, name: sanitizeName(name), ready: false });
     socket.join(room.code);
     socket.data.roomCode = room.code;
     broadcastLobby(room);

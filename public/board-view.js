@@ -17,7 +17,7 @@
 
 (function () {
   // Tons "pierres précieuses", identiques aux tokens --player-1..4 du CSS.
-  const PLAYER_COLORS = ["#c0455c", "#4a83c4", "#3f9e6e", "#9c5cc7"];
+  const PLAYER_COLORS = ["#c0455c", "#4a83c4", "#3f9e6e", "#9c5cc7", "#d98c3f"];
 
   const GROUP_COLORS = {
     marron: "#8d5b4c",
@@ -34,12 +34,13 @@
   };
 
   // Décalages (en % de la largeur/hauteur du plateau) pour que jusqu'à
-  // 4 pions sur la même case restent visibles au lieu de se superposer.
+  // 5 pions sur la même case restent visibles au lieu de se superposer.
   const TOKEN_OFFSETS = [
     { dx: -1.8, dy: -1.8 },
     { dx: 1.8, dy: -1.8 },
     { dx: -1.8, dy: 1.8 },
     { dx: 1.8, dy: 1.8 },
+    { dx: 0, dy: 0 },
   ];
 
   // Motifs des points de dé (grille 3x3, true = point visible)

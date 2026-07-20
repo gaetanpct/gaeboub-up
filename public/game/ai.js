@@ -41,8 +41,8 @@
       proactiveTradeChance: 0.15, // probabilité de tenter de proposer un échange par tour
       usePowersProactively: 0.4,  // probabilité d'utiliser un pouvoir instantané dès qu'il a de la valeur
       decisionJitter: 0.30,       // variation aléatoire volontaire (évite d'être 100% prévisible/calculable de l'extérieur)
-      thinkTimeSimpleMs: [350, 600],
-      thinkTimeComplexMs: [500, 900],
+      thinkTimeSimpleMs: [500, 750],
+      thinkTimeComplexMs: [700, 1100],
     },
     intermediaire: {
       label: "Intermédiaire",
@@ -55,8 +55,8 @@
       proactiveTradeChance: 0.3,
       usePowersProactively: 0.65,
       decisionJitter: 0.25,
-      thinkTimeSimpleMs: [300, 550],
-      thinkTimeComplexMs: [600, 1100],
+      thinkTimeSimpleMs: [450, 700],
+      thinkTimeComplexMs: [750, 1250],
     },
     difficile: {
       label: "Difficile",
@@ -69,8 +69,8 @@
       proactiveTradeChance: 0.45,
       usePowersProactively: 0.85,
       decisionJitter: 0.22,
-      thinkTimeSimpleMs: [250, 450],
-      thinkTimeComplexMs: [650, 1300],
+      thinkTimeSimpleMs: [400, 650],
+      thinkTimeComplexMs: [800, 1400],
     },
     expert: {
       label: "Expert",
@@ -88,8 +88,8 @@
       // c'est de l'imprévisibilité délibérée — donc ce paramètre reste
       // élevé même au niveau le plus fort, contrairement aux erreurs.
       decisionJitter: 0.20,
-      thinkTimeSimpleMs: [200, 380],
-      thinkTimeComplexMs: [700, 1500],
+      thinkTimeSimpleMs: [350, 550],
+      thinkTimeComplexMs: [850, 1600],
     },
   };
 

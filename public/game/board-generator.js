@@ -129,8 +129,8 @@
     //    de place, plutôt que de produire un plateau invalide.
     let fillerCount = numChanceCards + numSpecialCards + numTaxes + numAirports + numUtilities;
     let effective;
-    if (fillerCount > nonCornerSlots - numGroups) {
-      const maxFiller = Math.max(0, nonCornerSlots - numGroups);
+    if (fillerCount > nonCornerSlots - numGroups * 2) {
+      const maxFiller = Math.max(0, nonCornerSlots - numGroups * 2);
       const ratio = fillerCount > 0 ? maxFiller / fillerCount : 0;
       const scale = (n) => Math.floor(n * ratio);
       effective = {
@@ -147,14 +147,14 @@
 
     let propertyBudget = nonCornerSlots - fillerCount;
 
-    // GARDE-FOU IMPORTANT : si même avec les fillers réduits il n'y a pas
-    // assez de place pour au moins 1 case par groupe demandé (typiquement
-    // : beaucoup de groupes + petit plateau), on réduit le nombre de
-    // groupes en conséquence plutôt que de produire un plateau incomplet
-    // (des cases "undefined") — c'est exactement le cas que ce changement
-    // (jusqu'à 11 groupes) pouvait déclencher sur un petit plateau.
-    if (numGroups > propertyBudget) {
-      numGroups = Math.max(1, propertyBudget);
+    // GARDE-FOU IMPORTANT : chaque groupe doit pouvoir compter au moins 2
+    // cases désormais (plus de "groupe" à une seule propriété) — si même
+    // avec les fillers réduits il n'y a pas assez de place pour ça
+    // (typiquement : beaucoup de groupes + petit plateau), on réduit le
+    // nombre de groupes en conséquence plutôt que de produire un plateau
+    // incomplet.
+    if (numGroups * 2 > propertyBudget) {
+      numGroups = Math.max(1, Math.floor(propertyBudget / 2));
     }
 
     const last = totalTiles / 4;
@@ -203,6 +203,17 @@
     // fois les cases isolées ci-dessus déjà réservées.
     const propertyCapacityPerSide = fillerBucketsBySide.map((bucket) => sideCapacity - bucket.length);
 
+    // GARDE-FOU PRÉCIS : le calcul global (numGroups*2 <= propertyBudget)
+    // ne suffit pas — chaque côté arrondit sa capacité à l'entier inférieur
+    // par paire de 2, ce qui peut "perdre" jusqu'à 1 case par côté (donc
+    // jusqu'à 4 au total) par rapport à la somme brute. On vérifie donc le
+    // VRAI maximum réalisable côté par côté, et on réduit numGroups si
+    // besoin plutôt que de produire un groupe à une seule case.
+    const maxFeasibleGroups = propertyCapacityPerSide.reduce((sum, cap) => sum + Math.floor(cap / 2), 0);
+    if (numGroups > maxFeasibleGroups) {
+      numGroups = Math.max(1, maxFeasibleGroups);
+    }
+
     // 3) Décide COMBIEN de groupes vont sur chaque côté, proportionnellement
     //    à la capacité RÉELLE de ce côté (cases isolées déjà retirées),
     //    PUIS dimensionne les groupes de CHAQUE côté pour remplir
@@ -226,6 +237,40 @@
         groupsPerSide[fractions[i % 4].s] += 1;
       }
     }
+
+    // GARDE-FOU IMPORTANT : la répartition ci-dessus (floor + plus grand
+    // reste) peut assigner à un côté plus de groupes que sa capacité ne
+    // peut réellement supporter à 2 cases minimum chacun (elle ne
+    // raisonne qu'en moyenne globale, pas côté par côté). On redistribue
+    // l'excédent vers un côté qui a encore de la marge, jusqu'à ce que
+    // chaque côté puisse honorer ses groupes au minimum de 2 cases.
+    let rebalanceSafety = 0;
+    while (rebalanceSafety < 50) {
+      rebalanceSafety++;
+      let movedSomething = false;
+      for (let s = 0; s < 4; s++) {
+        const maxGroupsForSide = Math.floor(propertyCapacityPerSide[s] / 2);
+        if (groupsPerSide[s] > maxGroupsForSide) {
+          let recipient = -1;
+          let bestSlack = 0;
+          for (let s2 = 0; s2 < 4; s2++) {
+            if (s2 === s) continue;
+            const maxForS2 = Math.floor(propertyCapacityPerSide[s2] / 2);
+            const slack = maxForS2 - groupsPerSide[s2];
+            if (slack > bestSlack) {
+              bestSlack = slack;
+              recipient = s2;
+            }
+          }
+          if (recipient >= 0) {
+            groupsPerSide[s] -= 1;
+            groupsPerSide[recipient] += 1;
+            movedSomething = true;
+          }
+        }
+      }
+      if (!movedSomething) break;
+    }
     // Remarque : si numGroups < 4, au moins un côté aura FORCÉMENT 0
     // groupe (on ne peut pas répartir 3 groupes sur 4 côtés en en mettant
     // au moins 1 partout) — ce n'est pas une erreur, la capacité propriété
@@ -242,8 +287,8 @@
         }
         return [];
       }
-      const sizes = new Array(count).fill(1);
-      let remaining = propertyCapacityPerSide[s] - count;
+      const sizes = new Array(count).fill(2);
+      let remaining = propertyCapacityPerSide[s] - count * 2;
       let safety = 0;
       while (remaining > 0 && safety < 10000 && !sizes.every((sz) => sz >= 4)) {
         const g = randomInt(count);

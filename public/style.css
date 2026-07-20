@@ -346,6 +346,36 @@ button:disabled {
   text-align: center;
 }
 
+.action-box--compact {
+  padding: 0.6rem 0.7rem;
+}
+
+.action-box--compact p,
+.action-box--compact .auction-countdowns {
+  margin: 0.2rem 0;
+  font-size: 0.78rem;
+}
+
+.action-box--compact .auction-header {
+  font-size: 0.85rem;
+}
+
+.auction-box-compact .btn-quick-bid,
+.action-box--compact .btn-quick-bid {
+  padding: 0.35rem 0.4rem;
+  font-size: 0.85rem;
+}
+
+.action-box--compact .quick-bid-row {
+  margin: 0.35rem 0;
+  gap: 0.35rem;
+}
+
+.action-box--compact button:not(.btn-quick-bid) {
+  font-size: 0.78rem;
+  padding: 0.35rem 0.6rem;
+}
+
 .action-box button {
   margin: 0.25rem;
 }
@@ -711,20 +741,6 @@ button:disabled {
    ============================================================ */
 
 /* ---- Réglages de la partie (salon d'attente) ---- */
-
-.account-status {
-  text-align: center;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  margin-bottom: 0.6rem;
-}
-
-.account-status__actions {
-  display: flex;
-  justify-content: center;
-  gap: 0.8rem;
-  margin-top: 0.2rem;
-}
 
 .add-ai-panel {
   display: flex;
@@ -1130,6 +1146,23 @@ body.is-game-screen .app {
   flex-direction: column;
   gap: 0.1rem;
   margin: 0.4rem 0;
+}
+
+.auction-custom-bid {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin: 0.35rem 0;
+}
+
+.auction-custom-bid summary {
+  cursor: pointer;
+  color: var(--gold-bright);
+}
+
+.auction-custom-bid .auction-input {
+  width: 70px;
+  margin: 0.3rem 0.3rem 0 0;
+  padding: 0.25rem;
 }
 
 .stepper-row {

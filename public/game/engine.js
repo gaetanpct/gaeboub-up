@@ -1670,7 +1670,13 @@
       const taxNote = this.tradeTaxPercent > 0 ? ` (taxe de ${this.tradeTaxPercent}% prélevée)` : "";
       from.stats.tradesCompleted += 1;
       to.stats.tradesCompleted += 1;
-      this.addLog(`🤝 Échange conclu entre ${from.name} et ${to.name}${taxNote} !`);
+
+      const offerParts = trade.offerTiles.map((i) => this.board[i].name);
+      if (trade.offerMoney > 0) offerParts.push(`${trade.offerMoney}`);
+      const requestParts = trade.requestTiles.map((i) => this.board[i].name);
+      if (trade.requestMoney > 0) requestParts.push(`${trade.requestMoney}`);
+      const summary = `${from.name} donne ${offerParts.join(", ") || "rien"} et reçoit ${requestParts.join(", ") || "rien"}`;
+      this.addLog(`🤝 Échange conclu entre ${from.name} et ${to.name}${taxNote} : ${summary}.`);
       this._recheckDebtStatus(from);
       this._recheckDebtStatus(to);
       return { ok: true };

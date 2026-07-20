@@ -14,8 +14,6 @@
 
     <!-- Écran d'accueil : choisir un pseudo, créer ou rejoindre un salon -->
     <section id="screen-home" class="screen">
-      <div id="account-status" class="account-status"></div>
-
       <label for="input-name">Ton pseudo</label>
       <input id="input-name" type="text" placeholder="Ton pseudo" maxlength="20" />
 
@@ -34,43 +32,6 @@
         <a href="test-phase2.html">→ Tester le moteur du jeu en solo (outil de debug)</a>
       </p>
     </section>
-
-    <!-- Fenêtre de connexion / inscription -->
-    <div id="auth-modal" class="modal-overlay" hidden>
-      <div class="modal-box modal-box--narrow">
-        <div class="modal-header">
-          <h2 id="auth-modal-title">Connexion</h2>
-          <button id="btn-close-auth" class="btn-close">✕</button>
-        </div>
-        <div class="properties-list">
-          <div id="auth-signup-fields" hidden>
-            <label>Pseudo
-              <input id="auth-pseudo" type="text" maxlength="20" placeholder="Ton pseudo" />
-            </label>
-          </div>
-          <label>Adresse email
-            <input id="auth-email" type="email" placeholder="toi@exemple.com" />
-          </label>
-          <label>Mot de passe
-            <input id="auth-password" type="password" placeholder="6 caractères minimum" />
-          </label>
-          <p id="auth-error" class="error-text"></p>
-          <button id="btn-auth-submit" class="btn-primary">Se connecter</button>
-          <button id="btn-auth-switch" class="btn-text-link" type="button">Pas encore de compte ? Créer un compte</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Fenêtre des statistiques cumulées -->
-    <div id="account-stats-modal" class="modal-overlay" hidden>
-      <div class="modal-box">
-        <div class="modal-header">
-          <h2>📊 Mes statistiques</h2>
-          <button id="btn-close-account-stats" class="btn-close">✕</button>
-        </div>
-        <div id="account-stats-content" class="properties-list"></div>
-      </div>
-    </div>
 
     <!-- Écran salon d'attente -->
     <section id="screen-lobby" class="screen" hidden>
