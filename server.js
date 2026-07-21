@@ -25,7 +25,6 @@ app.use(express.static(path.join(__dirname, "public")));
 
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 5;
-const LOBBY_DISCONNECT_GRACE_MS = 30000; // 30s pour se reconnecter avant d'être vraiment retiré du salon
 
 // Toutes les parties en cours vivent en mémoire du serveur.
 // (Elles disparaissent si le serveur redémarre — normal pour ce stade du projet.)
@@ -53,24 +52,9 @@ function generateAIId() {
   return `ai-${aiIdCounter}-${Date.now()}`;
 }
 
-// Jeton de session : identifie un JOUEUR (indépendamment de son socket.id,
-// qui change à chaque connexion) pour permettre de recharger la page sans
-// perdre sa place dans la partie en cours.
-function generatePlayerToken() {
-  return require("crypto").randomBytes(16).toString("hex");
-}
-
-const AI_NAME_POOL = ["Bouzelouf", "Tigrou", "Daddy", "Mommy"];
-
-function aiDisplayName(room) {
-  const usedNames = new Set(room.players.map((p) => p.name));
-  const available = AI_NAME_POOL.filter((n) => !usedNames.has(n));
-  const pool = available.length > 0 ? available : AI_NAME_POOL; // tous déjà pris : on autorise un doublon en dernier recours
-  const base = pool[Math.floor(Math.random() * pool.length)];
-  if (!usedNames.has(base)) return base;
-  let suffix = 2;
-  while (usedNames.has(`${base} (${suffix})`)) suffix++;
-  return `${base} (${suffix})`;
+function aiDisplayName(difficulty, existingCount) {
+  const label = (AI.DIFFICULTY_PROFILES[difficulty] || AI.DIFFICULTY_PROFILES.difficile).label;
+  return `IA ${label}${existingCount > 0 ? ` (${existingCount + 1})` : ""}`;
 }
 
 function getRoom(socket) {
@@ -365,11 +349,10 @@ io.on("connection", (socket) => {
     if (socket.data.roomCode) return; // déjà dans un salon
 
     const code = generateRoomCode();
-    const playerToken = generatePlayerToken();
     const room = {
       code,
       hostSocketId: socket.id,
-      players: [{ socketId: socket.id, name: sanitizeName(name), ready: false, playerToken }],
+      players: [{ socketId: socket.id, name: sanitizeName(name), ready: false }],
       engine: null,
       started: false,
       socketToPlayerId: {},
@@ -381,8 +364,6 @@ io.on("connection", (socket) => {
 
     socket.join(code);
     socket.data.roomCode = code;
-    socket.data.playerToken = playerToken;
-    socket.emit("room:session", { roomCode: code, playerToken });
     broadcastLobby(room);
   });
 
@@ -403,59 +384,10 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const playerToken = generatePlayerToken();
-    room.players.push({ socketId: socket.id, name: sanitizeName(name), ready: false, playerToken });
+    room.players.push({ socketId: socket.id, name: sanitizeName(name), ready: false });
     socket.join(room.code);
     socket.data.roomCode = room.code;
-    socket.data.playerToken = playerToken;
-    socket.emit("room:session", { roomCode: room.code, playerToken });
     broadcastLobby(room);
-  });
-
-  // Reconnexion : le client renvoie le jeton reçu à la création/arrivée
-  // dans le salon (gardé de son côté en sessionStorage) pour retrouver sa
-  // place — que ce soit encore dans le salon d'attente, ou en pleine
-  // partie — sans jamais revenir à l'écran d'accueil.
-  socket.on("room:rejoin", ({ roomCode, playerToken } = {}) => {
-    if (socket.data.roomCode) return; // déjà dans un salon (ex: double appel)
-    const room = rooms.get((roomCode || "").toString().toUpperCase());
-    if (!room) {
-      socket.emit("room:rejoinFailed", { reason: "Cette partie n'existe plus." });
-      return;
-    }
-    const player = room.players.find((p) => p.playerToken === playerToken);
-    if (!player) {
-      socket.emit("room:rejoinFailed", { reason: "Impossible de te retrouver dans cette partie." });
-      return;
-    }
-
-    const oldSocketId = player.socketId;
-    player.socketId = socket.id;
-    player.disconnected = false;
-    if (room.disconnectTimers && room.disconnectTimers[playerToken]) {
-      clearTimeout(room.disconnectTimers[playerToken]);
-      delete room.disconnectTimers[playerToken];
-    }
-    if (room.hostSocketId === oldSocketId) room.hostSocketId = socket.id;
-    if (room.started && room.socketToPlayerId[oldSocketId] !== undefined) {
-      room.socketToPlayerId[socket.id] = room.socketToPlayerId[oldSocketId];
-      delete room.socketToPlayerId[oldSocketId];
-    }
-
-    socket.join(room.code);
-    socket.data.roomCode = room.code;
-    socket.data.playerToken = playerToken;
-    socket.emit("room:session", { roomCode: room.code, playerToken });
-
-    if (room.started && room.engine) {
-      const playerId = room.socketToPlayerId[socket.id];
-      const baseState = room.engine.getPublicState();
-      const stateForPlayer = buildStateForPlayer(baseState, playerId, room.settings, room.engine);
-      socket.emit("game:started", { state: stateForPlayer, socketToPlayerId: room.socketToPlayerId, settings: room.settings });
-      console.log(`${player.name} reconnecté en pleine partie (salon ${room.code}).`);
-    } else {
-      broadcastLobby(room);
-    }
   });
 
   socket.on("room:toggleReady", () => {
@@ -479,9 +411,10 @@ io.on("connection", (socket) => {
       return;
     }
     const chosenDifficulty = AI.DIFFICULTY_PROFILES[difficulty] ? difficulty : "difficile";
+    const existingAICount = room.players.filter((p) => p.isAI).length;
     room.players.push({
       socketId: generateAIId(),
-      name: aiDisplayName(room),
+      name: aiDisplayName(chosenDifficulty, existingAICount),
       ready: true, // une IA est toujours prête, pas besoin de la faire "cocher"
       isAI: true,
       difficulty: chosenDifficulty,
@@ -1010,42 +943,22 @@ io.on("connection", (socket) => {
     if (!room) return;
 
     if (!room.started) {
-      const player = room.players.find((p) => p.socketId === socket.id);
-      if (!player) return;
-
-      // Délai de grâce avant de vraiment retirer le joueur : sans ça, un
-      // rechargement de page (déconnexion puis reconnexion quasi
-      // immédiate) supprimerait le salon avant même d'avoir eu une chance
-      // de le retrouver — en particulier si c'était le dernier joueur
-      // encore présent.
-      player.disconnected = true;
-      const token = player.playerToken;
-      room.disconnectTimers = room.disconnectTimers || {};
-      if (room.disconnectTimers[token]) clearTimeout(room.disconnectTimers[token]);
-      room.disconnectTimers[token] = setTimeout(() => {
-        const stillRoom = rooms.get(room.code);
-        if (!stillRoom) return;
-        const stillPlayer = stillRoom.players.find((p) => p.playerToken === token);
-        if (!stillPlayer || !stillPlayer.disconnected) return; // reconnecté entre-temps
-        stillRoom.players = stillRoom.players.filter((p) => p.playerToken !== token);
-        delete stillRoom.disconnectTimers[token];
-        if (stillRoom.players.length === 0) {
-          rooms.delete(stillRoom.code);
-          return;
-        }
-        if (stillRoom.hostSocketId === stillPlayer.socketId) {
-          const newHost = stillRoom.players.find((p) => !p.isAI) || stillRoom.players[0];
-          stillRoom.hostSocketId = newHost.socketId;
-        }
-        broadcastLobby(stillRoom);
-      }, LOBBY_DISCONNECT_GRACE_MS);
-
+      room.players = room.players.filter((p) => p.socketId !== socket.id);
+      if (room.players.length === 0) {
+        rooms.delete(room.code);
+        return;
+      }
+      if (room.hostSocketId === socket.id) {
+        const newHost = room.players.find((p) => !p.isAI) || room.players[0];
+        room.hostSocketId = newHost.socketId;
+      }
       broadcastLobby(room);
     } else {
-      const player = room.players.find((p) => p.socketId === socket.id);
-      if (player) player.disconnected = true;
-      broadcastGame(room);
-      console.log(`${player ? player.name : "Un joueur"} déconnecté pendant une partie en cours (salon ${room.code}) — sa place est conservée pour une reconnexion.`);
+      // Limite connue de cette phase : pas de reconnexion/forfait géré
+      // pendant une partie en cours. Voir le récapitulatif de la Phase 3.
+      console.log(
+        `Joueur déconnecté pendant une partie en cours (salon ${room.code}). Reconnexion non gérée pour l'instant.`
+      );
     }
   });
 });

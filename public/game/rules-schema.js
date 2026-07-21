@@ -284,7 +284,6 @@
           options: [
             { value: "secret", label: "Enchère secrète (mise cachée, révélée à la fin)" },
             { value: "classic", label: "Enchère classique (à tour de rôle, à la criée)" },
-            { value: "none", label: "Pas d'enchère (la case reste juste invendue)" },
           ],
         },
         {
