@@ -89,7 +89,7 @@
       this.vacationPot = 0;
       this.turnLimit = options.turnLimit || null;
       this.diceSides = options.diceSides || 6;
-      this.auctionMode = options.auctionMode === "classic" ? "classic" : "secret";
+      this.auctionMode = ["classic", "none"].includes(options.auctionMode) ? options.auctionMode : "secret";
       this.tradeTaxPercent = options.tradeTaxPercent || 0;
       this.forcedAuctionsPerGame = options.forcedAuctionsPerGame || 0;
       this.worldEventsEnabled = !!options.worldEventsEnabled;
@@ -1153,6 +1153,7 @@
     // décision d'achat (this.pendingDecision devient non-null).
     roll() {
       if (this.gameOver || this.pendingDecision || this.pendingAuction || this.pendingMoveChoice || this._pendingTurnContinuation) return;
+      if (this.players.some((p) => p.inDebt)) return;
       const player = this.currentPlayer();
       if (player.bankrupt) {
         this.nextPlayer();
@@ -1396,7 +1397,10 @@
       const triggeredByRoll = options.triggeredByRoll !== false;
       const tile = this.board[tileIndex];
       const bidders = this.activePlayers().map((p) => p.id);
-      if (bidders.length === 0) {
+      if (bidders.length === 0 || this.auctionMode === "none") {
+        if (this.auctionMode === "none") {
+          this.addLog(`${tile.name} reste invendue (pas d'enchère activée).`);
+        }
         if (triggeredByRoll) this._afterRollResolved(this._pendingDiceWasDouble);
         return;
       }
@@ -1426,6 +1430,9 @@
       if (!this.forcedAuctionsPerGame || this.forcedAuctionsPerGame <= 0) {
         return { ok: false, reason: "Cette règle n'est pas activée pour cette partie." };
       }
+      if (this.auctionMode === "none") {
+        return { ok: false, reason: "Les enchères sont désactivées pour cette partie (règle \"Pas d'enchère\")." };
+      }
       if (player.forcedAuctionsUsed >= this.forcedAuctionsPerGame) {
         return { ok: false, reason: "Tu as déjà utilisé toutes tes enchères forcées." };
       }
@@ -1454,7 +1461,12 @@
       }
       const player = this.players[playerId];
       const bid = Math.max(0, Math.floor(Number(amount) || 0));
-      if (bid > player.money) return { ok: false, reason: "Tu n'as pas assez d'argent pour cette mise." };
+      // Une mise de 0 (= passer) doit TOUJOURS être possible, même si le
+      // joueur est déjà en négatif (arrivé là par un autre mécanisme que
+      // la dette formelle) — sinon il resterait bloqué à jamais, incapable
+      // de sortir de l'enchère. Seule une vraie mise positive au-delà de
+      // ses moyens est refusée.
+      if (bid > 0 && bid > player.money) return { ok: false, reason: "Tu n'as pas assez d'argent pour cette mise." };
 
       this.pendingAuction.bids[playerId] = bid;
       this.pendingAuction.pendingPlayers = this.pendingAuction.pendingPlayers.filter((id) => id !== playerId);
@@ -1645,15 +1657,19 @@
       }
 
       // On revérifie que tout est toujours valide au moment de l'acceptation
-      // (une propriété a pu être vendue/hypothéquée entre-temps).
+      // (une propriété a pu être vendue/hypothéquée entre-temps). Le solde
+      // ACTUEL d'un joueur (même déjà négatif s'il est à découvert) n'est
+      // PAS un motif de refus en soi — comme un loyer ou une taxe, un
+      // échange peut tout à fait faire passer quelqu'un en négatif ; c'est
+      // ensuite le mécanisme normal de dette qui prend le relais.
       const from = this.players[trade.fromId];
       const to = this.players[trade.toId];
       const offerStillValid = trade.offerTiles.every((i) => this.board[i].owner === trade.fromId && !this.board[i].mortgaged);
       const requestStillValid = trade.requestTiles.every((i) => this.board[i].owner === trade.toId && !this.board[i].mortgaged);
 
-      if (!offerStillValid || !requestStillValid || from.money < trade.offerMoney || to.money < trade.requestMoney) {
+      if (!offerStillValid || !requestStillValid) {
         this.tradeOffers.splice(idx, 1);
-        return { ok: false, reason: "L'échange n'est plus valide (une propriété ou l'argent a changé depuis la proposition)." };
+        return { ok: false, reason: "L'échange n'est plus valide (une propriété a changé depuis la proposition)." };
       }
 
       trade.offerTiles.forEach((i) => { this.board[i].owner = trade.toId; });
@@ -1677,6 +1693,8 @@
       if (trade.requestMoney > 0) requestParts.push(`${trade.requestMoney}`);
       const summary = `${from.name} donne ${offerParts.join(", ") || "rien"} et reçoit ${requestParts.join(", ") || "rien"}`;
       this.addLog(`🤝 Échange conclu entre ${from.name} et ${to.name}${taxNote} : ${summary}.`);
+      this.checkBankruptcy(from);
+      this.checkBankruptcy(to);
       this._recheckDebtStatus(from);
       this._recheckDebtStatus(to);
       return { ok: true };

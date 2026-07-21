@@ -10,6 +10,77 @@ const socket = io();
 
 let myPlayerId = null;
 
+// ============================================================
+// Reconnexion — permet de recharger la page (bug, gel, plantage...)
+// sans revenir à l'écran d'accueil : on garde le code du salon et un
+// jeton de session dans sessionStorage (propre à cet onglet), et on
+// tente de rejoindre automatiquement au chargement.
+// ============================================================
+const SESSION_KEY = "reachup_session";
+
+function saveSession(roomCode, playerToken) {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ roomCode, playerToken }));
+  } catch {
+    // sessionStorage indisponible (navigation privée stricte...) : tant pis, pas de reconnexion possible.
+  }
+}
+
+function loadSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearSession() {
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // rien à faire
+  }
+}
+
+socket.on("room:session", ({ roomCode, playerToken }) => {
+  saveSession(roomCode, playerToken);
+});
+
+socket.on("room:rejoinFailed", ({ reason }) => {
+  clearSession();
+  showScreen("home");
+  homeError.textContent = reason || "Impossible de reprendre cette partie.";
+});
+
+socket.on("connect", () => {
+  const session = loadSession();
+  if (session && session.roomCode && session.playerToken) {
+    socket.emit("room:rejoin", session);
+  }
+});
+
+// Si une session existait déjà au chargement de la page, on affiche tout
+// de suite un message de reconnexion à la place de l'écran d'accueil —
+// pour éviter le flash "écran d'accueil puis salon/partie" pendant le
+// bref aller-retour réseau. On ne touche PAS au contenu de screen-home
+// (le script a besoin de ses champs plus loin) : on le cache et on
+// insère un message à côté, retiré dès qu'un vrai écran prend le relais.
+(function showReconnectingIfNeeded() {
+  const session = loadSession();
+  if (!session) return;
+  const homeScreen = document.getElementById("screen-home");
+  if (!homeScreen) return;
+  homeScreen.hidden = true;
+  const reconnecting = document.createElement("p");
+  reconnecting.id = "reconnecting-message";
+  reconnecting.className = "properties-empty";
+  reconnecting.style.textAlign = "center";
+  reconnecting.style.paddingTop = "2rem";
+  reconnecting.textContent = "🔄 Reconnexion à ta partie en cours...";
+  homeScreen.insertAdjacentElement("afterend", reconnecting);
+})();
+
 // ---- Gestion des écrans ----
 const screens = {
   home: document.getElementById("screen-home"),
@@ -20,6 +91,8 @@ function showScreen(name) {
   Object.entries(screens).forEach(([key, el]) => {
     el.hidden = key !== name;
   });
+  const reconnectingMsg = document.getElementById("reconnecting-message");
+  if (reconnectingMsg) reconnectingMsg.remove();
   // L'écran de jeu utilise une mise en page plein écran spéciale (Phase 5)
   // pour que tout tienne sans avoir à scroller.
   document.body.classList.toggle("is-game-screen", name === "game");
