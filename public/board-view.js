@@ -394,6 +394,11 @@
   function updateBoard(state, myPlayerId) {
     if (!boardEl) initBoard(state.board);
 
+    const disabledTiles =
+      state.activeEvent && state.activeEvent.id === "disabled_zones" && state.activeEvent.disabledTiles
+        ? state.activeEvent.disabledTiles
+        : [];
+
     // 1. Surbrillance des propriétés possédées + maisons/hôtel/hypothèque
     state.board.forEach((tile, index) => {
       const el = boardEl.querySelector(`.board-tile[data-tile-index="${index}"]`);
@@ -404,6 +409,8 @@
       } else {
         el.classList.remove("board-tile--owned");
       }
+
+      el.classList.toggle("board-tile--disabled-zone", disabledTiles.includes(index));
 
       const buildingsSlot = buildingElements[index];
       if (buildingsSlot) {

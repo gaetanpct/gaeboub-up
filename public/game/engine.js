@@ -89,7 +89,7 @@
       this.vacationPot = 0;
       this.turnLimit = options.turnLimit || null;
       this.diceSides = options.diceSides || 6;
-      this.auctionMode = options.auctionMode === "classic" ? "classic" : "secret";
+      this.auctionMode = ["classic", "none"].includes(options.auctionMode) ? options.auctionMode : "secret";
       this.tradeTaxPercent = options.tradeTaxPercent || 0;
       this.forcedAuctionsPerGame = options.forcedAuctionsPerGame || 0;
       this.worldEventsEnabled = !!options.worldEventsEnabled;
@@ -109,6 +109,7 @@
 
       const startingMoney = options.startingMoney || STARTING_MONEY;
       this.powersEnabled = !!options.powersEnabled;
+      this.powerRerollCost = 150;
       this.players = playerNames.map((name, id) => ({
         id,
         name,
@@ -158,6 +159,7 @@
       // État "pas à pas", utilisé par le mode interactif (Phase 3+)
       this.doublesStreak = 0;
       this.pendingDecision = null; // { type: "buy", tileIndex, playerId }
+      this.pendingChanceDraw = null; // { playerId, tileType } — en attente d'un clic pour tirer la carte
       this.lastJailEvent = null; // { playerId, fromIndex } — pour l'animation de transition avant la prison
       this.pendingMoveChoice = null; // { playerId, maxDistance, isDouble } — pouvoir Libre arrêt
       this.rentCollectorEffect = null; // { playerId, turnsRemaining } — pouvoir Collecteur
@@ -777,11 +779,10 @@
             this._startRandomWorldEvent();
             break;
           }
-          const deck = this._availableChanceCards();
-          const card = deck[Math.floor(Math.random() * deck.length)];
-          const label = tile.type === "special" ? "Carte Spéciale" : "Carte Destin";
-          this.addLog(`${player.name} tire une ${label} : "${card.description}"`);
-          card.effect(this, player);
+          // Ne tire plus automatiquement : le joueur doit cliquer pour
+          // tirer sa carte (suspense, et ça laisse le temps de suivre ce
+          // qui se passe à l'écran plutôt que de tout enchaîner d'un coup).
+          this.pendingChanceDraw = { playerId: player.id, tileType: tile.type };
           break;
         }
         case "go-to-jail": {
@@ -1153,6 +1154,7 @@
     // décision d'achat (this.pendingDecision devient non-null).
     roll() {
       if (this.gameOver || this.pendingDecision || this.pendingAuction || this.pendingMoveChoice || this._pendingTurnContinuation) return;
+      if (this.players.some((p) => p.inDebt)) return;
       const player = this.currentPlayer();
       if (player.bankrupt) {
         this.nextPlayer();
@@ -1243,7 +1245,8 @@
       // joueur vers une case achetable (ex: "avance de 3 cases") et donc
       // mettre une décision ou une enchère en attente : dans ce cas, on
       // ne conclut PAS encore ce lancer, on attend que ce soit réglé.
-      if (!this.pendingDecision && !this.pendingAuction) {
+      // Idem si une carte reste justement à tirer (clic requis).
+      if (!this.pendingDecision && !this.pendingAuction && !this.pendingChanceDraw) {
         this._afterRollResolved(isDouble);
       }
     }
@@ -1346,6 +1349,39 @@
       return price;
     }
 
+    // Tire enfin la carte Destin/Spéciale mise en attente — n'agit
+    // qu'après un clic explicite du joueur concerné (voir resolveTile).
+    drawChanceCard(playerId) {
+      if (!this.pendingChanceDraw || this.pendingChanceDraw.playerId !== playerId) {
+        return { ok: false, reason: "Aucune carte à tirer pour toi en ce moment." };
+      }
+      const player = this.players[playerId];
+      const tileType = this.pendingChanceDraw.tileType;
+      this.pendingChanceDraw = null;
+
+      const deck = this._availableChanceCards();
+      const card = deck[Math.floor(Math.random() * deck.length)];
+      const label = tileType === "special" ? "Carte Spéciale" : "Carte Destin";
+      this.addLog(`${player.name} tire une ${label} : "${card.description}"`);
+      card.effect(this, player);
+
+      this.checkBankruptcy(player);
+      if (player.inDebt) {
+        this._pendingTurnContinuation = () => this._finishChanceDraw(player);
+        return { ok: true };
+      }
+      this._finishChanceDraw(player);
+      return { ok: true };
+    }
+
+    // Reprend la suite normale du tour après le tirage (même logique que
+    // pour une décision d'achat ou une enchère qui viennent de se conclure).
+    _finishChanceDraw(player) {
+      if (!this.pendingDecision && !this.pendingAuction && !this.pendingChanceDraw) {
+        this._afterRollResolved(this._pendingDiceWasDouble);
+      }
+    }
+
     decide(playerId, buy) {
       if (!this.pendingDecision || this.pendingDecision.playerId !== playerId) return;
       const tile = this.board[this.pendingDecision.tileIndex];
@@ -1396,7 +1432,10 @@
       const triggeredByRoll = options.triggeredByRoll !== false;
       const tile = this.board[tileIndex];
       const bidders = this.activePlayers().map((p) => p.id);
-      if (bidders.length === 0) {
+      if (bidders.length === 0 || this.auctionMode === "none") {
+        if (this.auctionMode === "none") {
+          this.addLog(`${tile.name} reste invendue (pas d'enchère activée).`);
+        }
         if (triggeredByRoll) this._afterRollResolved(this._pendingDiceWasDouble);
         return;
       }
@@ -1426,6 +1465,9 @@
       if (!this.forcedAuctionsPerGame || this.forcedAuctionsPerGame <= 0) {
         return { ok: false, reason: "Cette règle n'est pas activée pour cette partie." };
       }
+      if (this.auctionMode === "none") {
+        return { ok: false, reason: "Les enchères sont désactivées pour cette partie (règle \"Pas d'enchère\")." };
+      }
       if (player.forcedAuctionsUsed >= this.forcedAuctionsPerGame) {
         return { ok: false, reason: "Tu as déjà utilisé toutes tes enchères forcées." };
       }
@@ -1454,7 +1496,12 @@
       }
       const player = this.players[playerId];
       const bid = Math.max(0, Math.floor(Number(amount) || 0));
-      if (bid > player.money) return { ok: false, reason: "Tu n'as pas assez d'argent pour cette mise." };
+      // Une mise de 0 (= passer) doit TOUJOURS être possible, même si le
+      // joueur est déjà en négatif (arrivé là par un autre mécanisme que
+      // la dette formelle) — sinon il resterait bloqué à jamais, incapable
+      // de sortir de l'enchère. Seule une vraie mise positive au-delà de
+      // ses moyens est refusée.
+      if (bid > 0 && bid > player.money) return { ok: false, reason: "Tu n'as pas assez d'argent pour cette mise." };
 
       this.pendingAuction.bids[playerId] = bid;
       this.pendingAuction.pendingPlayers = this.pendingAuction.pendingPlayers.filter((id) => id !== playerId);
@@ -1645,15 +1692,19 @@
       }
 
       // On revérifie que tout est toujours valide au moment de l'acceptation
-      // (une propriété a pu être vendue/hypothéquée entre-temps).
+      // (une propriété a pu être vendue/hypothéquée entre-temps). Le solde
+      // ACTUEL d'un joueur (même déjà négatif s'il est à découvert) n'est
+      // PAS un motif de refus en soi — comme un loyer ou une taxe, un
+      // échange peut tout à fait faire passer quelqu'un en négatif ; c'est
+      // ensuite le mécanisme normal de dette qui prend le relais.
       const from = this.players[trade.fromId];
       const to = this.players[trade.toId];
       const offerStillValid = trade.offerTiles.every((i) => this.board[i].owner === trade.fromId && !this.board[i].mortgaged);
       const requestStillValid = trade.requestTiles.every((i) => this.board[i].owner === trade.toId && !this.board[i].mortgaged);
 
-      if (!offerStillValid || !requestStillValid || from.money < trade.offerMoney || to.money < trade.requestMoney) {
+      if (!offerStillValid || !requestStillValid) {
         this.tradeOffers.splice(idx, 1);
-        return { ok: false, reason: "L'échange n'est plus valide (une propriété ou l'argent a changé depuis la proposition)." };
+        return { ok: false, reason: "L'échange n'est plus valide (une propriété a changé depuis la proposition)." };
       }
 
       trade.offerTiles.forEach((i) => { this.board[i].owner = trade.toId; });
@@ -1677,6 +1728,8 @@
       if (trade.requestMoney > 0) requestParts.push(`${trade.requestMoney}`);
       const summary = `${from.name} donne ${offerParts.join(", ") || "rien"} et reçoit ${requestParts.join(", ") || "rien"}`;
       this.addLog(`🤝 Échange conclu entre ${from.name} et ${to.name}${taxNote} : ${summary}.`);
+      this.checkBankruptcy(from);
+      this.checkBankruptcy(to);
       this._recheckDebtStatus(from);
       this._recheckDebtStatus(to);
       return { ok: true };
@@ -1821,6 +1874,27 @@
     }
 
     // ---- Assurance — Phase 8e (+ 3 formules au choix, Phase 10) ----
+    // Change de pouvoir contre paiement — seulement si le pouvoir actuel
+    // n'a pas encore été utilisé (sinon ce serait un moyen détourné d'en
+    // récupérer un second gratuitement après usage).
+    rerollPower(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this.powersEnabled) return { ok: false, reason: "Les pouvoirs ne sont pas activés pour cette partie." };
+      if (!player.power) return { ok: false, reason: "Tu n'as pas de pouvoir à changer." };
+      if (player.power.used) return { ok: false, reason: "Tu as déjà utilisé ton pouvoir : impossible d'en changer maintenant." };
+      if (player.money < this.powerRerollCost) return { ok: false, reason: `Il faut ${this.powerRerollCost} pour changer de pouvoir.` };
+
+      const oldName = (POWERS.find((p) => p.id === player.power.id) || {}).name || player.power.id;
+      this.pay(player, null, this.powerRerollCost);
+      const excludeIds = this.players.length < 3 ? ["forced_swap", player.power.id] : [player.power.id];
+      const newId = randomPowerId(excludeIds);
+      player.power = { id: newId, used: false, armed: false };
+      const newName = (POWERS.find((p) => p.id === newId) || {}).name || newId;
+      this.addLog(`🔄 ${player.name} paie ${this.powerRerollCost} pour changer de pouvoir : ${oldName} → ${newName}.`);
+      return { ok: true };
+    }
+
     buyInsurance(playerId, planId) {
       if (!this.insuranceEnabled) return { ok: false, reason: "L'assurance n'est pas activée pour cette partie." };
       const player = this.players[playerId];
@@ -1849,6 +1923,7 @@
         turnNumber: this.turnNumber,
         currentPlayerIndex: this.currentPlayerIndex,
         pendingDecision: this.pendingDecision,
+        pendingChanceDraw: this.pendingChanceDraw,
         gameOver: this.gameOver,
         winner: this.winner ? { id: this.winner.id, name: this.winner.name } : null,
         lastRoll: this.lastRoll,
@@ -1857,6 +1932,7 @@
         activeEvent: this.activeEvent ? { ...this.activeEvent } : null,
         loansEnabled: this.loansEnabled,
         insuranceEnabled: this.insuranceEnabled,
+        powerRerollCost: this.powerRerollCost,
         insurancePrices: this.insurancePrices,
         forcedAuctionsPerGame: this.forcedAuctionsPerGame,
         rentMultipliersByHouses: RENT_MULTIPLIERS_BY_HOUSES,
@@ -1993,6 +2069,8 @@
           const player = this.players[this.pendingDecision.playerId];
           const wantsToBuy = this.decideBuy(player, tile);
           this.decide(this.pendingDecision.playerId, wantsToBuy);
+        } else if (this.pendingChanceDraw) {
+          this.drawChanceCard(this.pendingChanceDraw.playerId);
         } else {
           this.roll();
         }

@@ -200,6 +200,28 @@
     return value;
   }
 
+  // Valeur de BLOCAGE : au-delà de ce que CETTE case vaut pour moi, à quel
+  // point est-ce dangereux de la laisser à un adversaire qui compléterait
+  // ainsi son monopole ? Pertinent surtout en enchère, où la vraie
+  // question n'est pas "est-ce que je veux acheter" mais "qui va
+  // l'obtenir" — remporter une case sans intérêt pour soi peut valoir le
+  // coup uniquement pour empêcher un adversaire de progresser.
+  function denialValue(state, myPlayerId, tileIndex, profile) {
+    const tile = state.board[tileIndex];
+    if (!tile || tile.type !== "property") return 0;
+    let maxThreat = 0;
+    state.players.forEach((p) => {
+      if (p.id === myPlayerId || p.bankrupt) return;
+      const owned = groupOwnershipCount(state, p.id, tile.group);
+      const groupSize = tilesOfGroup(state, tile.group).length;
+      if (owned === groupSize - 1) {
+        const theirValue = strategicValue(state, p.id, tileIndex, profile);
+        maxThreat = Math.max(maxThreat, theirValue * 0.6);
+      }
+    });
+    return maxThreat;
+  }
+
   // Réserve de cash "de sécurité" que l'IA cherche à garder disponible
   // avant de dépenser (achat, construction, enchère...) — s'ajuste très
   // légèrement à l'avancement de la partie (plus tolérant en tout début).
@@ -388,7 +410,7 @@
   function decideAuctionBid(engine, state, me, profile) {
     const auction = state.pendingAuction;
     const tile = state.board[auction.tileIndex];
-    const value = strategicValue(state, me.id, auction.tileIndex, profile);
+    const value = strategicValue(state, me.id, auction.tileIndex, profile) + denialValue(state, me.id, auction.tileIndex, profile);
     const reserve = safeReserve(state, profile);
     const rawMax = Math.min(
       me.money - reserve,
@@ -495,6 +517,80 @@
   // Construction : construit tant que c'est rentable et que la réserve
   // de sécurité reste respectée, en respectant Even Build via canBuildHouse.
   // ---------------------------------------------------------------------
+  // Utilise la VRAIE formule de loyer du moteur (base × table de
+  // multiplicateurs, déjà exposée dans l'état public) plutôt qu'une
+  // approximation — sans ça, l'estimation du risque est fausse d'un
+  // facteur 2 à 6 selon le nombre de maisons.
+  function estimateTileExposure(state, tile) {
+    if (!OWNABLE_TYPES.includes(tile.type) || tile.mortgaged) return 0;
+    if (tile.type === "airport") {
+      const count = state.board.filter((t) => t.type === "airport" && t.owner === tile.owner && !t.mortgaged).length;
+      const rentTable = [25, 50, 100, 200, 300, 450];
+      return rentTable[Math.max(count - 1, 0)];
+    }
+    if (tile.type === "utility") {
+      const count = state.board.filter((t) => t.type === "utility" && t.owner === tile.owner && !t.mortgaged).length;
+      return count >= 2 ? 70 : 28; // approx (10x ou 4x une somme de dés moyenne ~7)
+    }
+    const baseRent = tile.rent || 0;
+    if (tile.houses > 0) {
+      const mult = (state.rentMultipliersByHouses || [1, 5, 15, 30, 40, 50])[tile.houses] || 1;
+      return baseRent * mult;
+    }
+    const owned = groupOwnershipCount(state, tile.owner, tile.group);
+    const groupSize = tilesOfGroup(state, tile.group).length;
+    return owned === groupSize ? baseRent * 2 : baseRent;
+  }
+
+  // Assurance : absente jusqu'ici de la panoplie de l'IA. Achète une
+  // formule quand le risque de loyer estimé sur les prochains tours
+  // dépasse clairement le coût de la prime — jamais par réflexe.
+  function considerBuyingInsurance(engine, state, me, profile) {
+    if (!state.insuranceEnabled) return false;
+    if (me.insurance && me.insurance.turnsRemaining > 0) return false;
+    const reserve = safeReserve(state, profile);
+
+    let totalExposure = 0;
+    let opponentOwnedCount = 0;
+    state.board.forEach((tile) => {
+      if (tile.owner === null || tile.owner === me.id) return;
+      if (!OWNABLE_TYPES.includes(tile.type) || tile.mortgaged) return;
+      opponentOwnedCount += 1;
+      totalExposure += estimateTileExposure(state, tile);
+    });
+    if (opponentOwnedCount === 0) return false; // rien à craindre pour l'instant
+
+    const boardLength = state.board.length;
+    const expectedLandings8Turns = 8 * (opponentOwnedCount / boardLength);
+    const avgExposurePerLanding = totalExposure / opponentOwnedCount;
+    const expectedRentOver8Turns = expectedLandings8Turns * avgExposurePerLanding;
+
+    const PLANS = [
+      { id: 0, coveragePercent: 25 },
+      { id: 1, coveragePercent: 50 },
+      { id: 2, coveragePercent: 75 },
+    ];
+    let bestPlan = null;
+    let bestValue = 0;
+    PLANS.forEach((plan) => {
+      const premium = state.insurancePrices[plan.id];
+      if (me.money - premium < reserve) return;
+      const covered = expectedRentOver8Turns * (plan.coveragePercent / 100);
+      const value = covered - premium;
+      if (value > bestValue) {
+        bestValue = value;
+        bestPlan = plan;
+      }
+    });
+    if (!bestPlan) return false;
+    // Marge de sécurité : ne souscrit que si l'avantage estimé est net,
+    // pas juste à l'équilibre (l'estimation est approximative).
+    if (bestValue < state.insurancePrices[bestPlan.id] * 0.2) return false;
+
+    const result = engine.buyInsurance(me.id, bestPlan.id);
+    return !!(result && result.ok);
+  }
+
   function considerBuilding(engine, state, me, profile) {
     let acted = false;
     let safety = 0;
@@ -505,14 +601,27 @@
       );
       if (myFullGroups.length === 0) break;
 
+      // Choisit selon le RENDEMENT (gain de loyer par euro investi), pas
+      // juste le coût le plus bas — construire une maison à 50 qui double
+      // à peine le loyer est un moins bon calcul qu'une maison à 150 qui
+      // le multiplie par 5.
+      const mults = state.rentMultipliersByHouses || [1, 5, 15, 30, 40, 50];
       let target = null;
       let targetCost = Infinity;
+      let bestRatio = -Infinity;
       myFullGroups.forEach((group) => {
         tilesOfGroup(state, group).forEach((tile) => {
           if (tile.owner !== me.id) return;
           const idx = state.board.indexOf(tile);
           const check = engine.canBuildHouse(me.id, idx);
-          if (check.ok && check.cost < targetCost) {
+          if (!check.ok) return;
+          const houses = tile.houses || 0;
+          const baseRent = tile.rent || 0;
+          const currentRent = houses === 0 ? baseRent * 2 : baseRent * mults[houses]; // monopole sans maison = loyer x2
+          const nextRent = baseRent * mults[houses + 1];
+          const ratio = (nextRent - currentRent) / Math.max(1, check.cost);
+          if (ratio > bestRatio) {
+            bestRatio = ratio;
             targetCost = check.cost;
             target = idx;
           }
@@ -561,9 +670,23 @@
     let accept = relativeGain >= -effectiveTolerance;
     // Ne jamais accepter un échange qui nous mettrait sous la réserve de sécurité.
     if (me.money + trade.offerMoney - trade.requestMoney < 0) accept = false;
-    // Ne jamais aider (sans contrepartie nette positive) le joueur en tête à compléter un monopole.
-    const proposer = state.players.find((p) => p.id === trade.fromId);
-    if (proposer && myRank(state, trade.fromId) === 1 && relativeGain < 0.05) accept = false;
+
+    // Ne jamais aider N'IMPORTE QUEL adversaire à compléter un monopole
+    // sans contrepartie nette clairement positive pour moi — pas
+    // seulement le leader : un 2e ou 3e qui complète un monopole devient
+    // vite la nouvelle menace.
+    const requestedGroupCounts = {};
+    trade.requestTiles.forEach((idx) => {
+      const t = state.board[idx];
+      if (t.type !== "property") return;
+      requestedGroupCounts[t.group] = (requestedGroupCounts[t.group] || 0) + 1;
+    });
+    const wouldCompleteMonopolyForProposer = Object.entries(requestedGroupCounts).some(([group, count]) => {
+      const currentlyOwned = groupOwnershipCount(state, trade.fromId, group);
+      const groupSize = tilesOfGroup(state, group).length;
+      return currentlyOwned + count >= groupSize;
+    });
+    if (wouldCompleteMonopolyForProposer && relativeGain < 0.15) accept = false;
 
     if (chance(profile.mistakeChance)) accept = !accept;
 
@@ -627,9 +750,11 @@
     //    (plutôt que 100% en argent) est souvent perçue comme plus juste
     //    et acceptée plus facilement.
     let offerTileIdx = null;
+    const targetGroup = state.board[bestTileIdx].group;
     state.board.forEach((tile, idx) => {
       if (offerTileIdx !== null) return;
       if (tile.type !== "property" || tile.owner !== me.id || (tile.houses || 0) > 0 || tile.mortgaged || idx === bestTileIdx) return;
+      if (tile.group === targetGroup) return; // même groupe que la case visée : un simple échange de place, aucun intérêt pour personne
       const myGroupSize = tilesOfGroup(state, tile.group).length;
       if (myGroupSize > 1 && groupOwnershipCount(state, me.id, tile.group) > 1) return; // je progresse déjà bien sur ce groupe, je la garde
       const theirOwned = groupOwnershipCount(state, bestTarget, tile.group);
@@ -763,6 +888,9 @@
     if (considerBuilding(engine, state, me, profile)) {
       return { kind: "build", complex: true };
     }
+    if (considerBuyingInsurance(engine, state, me, profile)) {
+      return { kind: "buyInsurance", complex: true };
+    }
     // Au plus UNE tentative d'initiative (échange, prêt, enchère forcée)
     // par tour, peu importe la cible — sinon, avec plusieurs adversaires
     // possibles, l'IA pourrait tourner indéfiniment de l'un à l'autre
@@ -817,6 +945,11 @@
     const profile = adjustProfileForRank(state, me, baseProfile);
 
     if (me.inDebt) return decideDebtResolution(engine, state, me, profile);
+
+    if (state.pendingChanceDraw && state.pendingChanceDraw.playerId === playerId) {
+      const result = engine.drawChanceCard(playerId);
+      return result && result.ok ? { kind: "drawChanceCard", complex: false } : null;
+    }
 
     if (state.pendingDecision && state.pendingDecision.playerId === playerId) {
       return decideBuy(engine, state, me, profile);

@@ -10,6 +10,77 @@ const socket = io();
 
 let myPlayerId = null;
 
+// ============================================================
+// Reconnexion — permet de recharger la page (bug, gel, plantage...)
+// sans revenir à l'écran d'accueil : on garde le code du salon et un
+// jeton de session dans sessionStorage (propre à cet onglet), et on
+// tente de rejoindre automatiquement au chargement.
+// ============================================================
+const SESSION_KEY = "reachup_session";
+
+function saveSession(roomCode, playerToken) {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ roomCode, playerToken }));
+  } catch {
+    // sessionStorage indisponible (navigation privée stricte...) : tant pis, pas de reconnexion possible.
+  }
+}
+
+function loadSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearSession() {
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // rien à faire
+  }
+}
+
+socket.on("room:session", ({ roomCode, playerToken }) => {
+  saveSession(roomCode, playerToken);
+});
+
+socket.on("room:rejoinFailed", ({ reason }) => {
+  clearSession();
+  showScreen("home");
+  homeError.textContent = reason || "Impossible de reprendre cette partie.";
+});
+
+socket.on("connect", () => {
+  const session = loadSession();
+  if (session && session.roomCode && session.playerToken) {
+    socket.emit("room:rejoin", session);
+  }
+});
+
+// Si une session existait déjà au chargement de la page, on affiche tout
+// de suite un message de reconnexion à la place de l'écran d'accueil —
+// pour éviter le flash "écran d'accueil puis salon/partie" pendant le
+// bref aller-retour réseau. On ne touche PAS au contenu de screen-home
+// (le script a besoin de ses champs plus loin) : on le cache et on
+// insère un message à côté, retiré dès qu'un vrai écran prend le relais.
+(function showReconnectingIfNeeded() {
+  const session = loadSession();
+  if (!session) return;
+  const homeScreen = document.getElementById("screen-home");
+  if (!homeScreen) return;
+  homeScreen.hidden = true;
+  const reconnecting = document.createElement("p");
+  reconnecting.id = "reconnecting-message";
+  reconnecting.className = "properties-empty";
+  reconnecting.style.textAlign = "center";
+  reconnecting.style.paddingTop = "2rem";
+  reconnecting.textContent = "🔄 Reconnexion à ta partie en cours...";
+  homeScreen.insertAdjacentElement("afterend", reconnecting);
+})();
+
 // ---- Gestion des écrans ----
 const screens = {
   home: document.getElementById("screen-home"),
@@ -20,6 +91,8 @@ function showScreen(name) {
   Object.entries(screens).forEach(([key, el]) => {
     el.hidden = key !== name;
   });
+  const reconnectingMsg = document.getElementById("reconnecting-message");
+  if (reconnectingMsg) reconnectingMsg.remove();
   // L'écran de jeu utilise une mise en page plein écran spéciale (Phase 5)
   // pour que tout tienne sans avoir à scroller.
   document.body.classList.toggle("is-game-screen", name === "game");
@@ -197,6 +270,10 @@ socket.on("room:update", (room) => {
   const isHost = room.hostSocketId === socket.id;
 
   lobbyPlayersEl.innerHTML = "";
+  const me = room.players.find((p) => p.socketId === socket.id);
+  btnReady.classList.toggle("btn-ready--active", !!(me && me.ready));
+  btnReady.textContent = me && me.ready ? "✅ Prêt !" : "Je suis prêt";
+
   room.players.forEach((p) => {
     const isPlayerHost = p.socketId === room.hostSocketId;
     const isMe = p.socketId === socket.id;
@@ -432,12 +509,19 @@ socket.on("game:started", ({ state, socketToPlayerId, settings }) => {
   lastKnownMoney = {}; // idem pour les indicateurs de variation d'argent
   showScreen("game");
   renderGame(state);
+  // Reconnexion directe vers une partie déjà terminée (cas rare) : la
+  // session ne sert plus à rien, on l'efface pour ne pas y revenir en boucle.
+  if (state.gameOver) clearSession();
 });
 
 socket.on("game:update", ({ state, settings }) => {
   if (settings) latestGameSettings = settings;
   processNewLogLines(state);
   renderGame(state);
+  // Dès que la partie se termine, la session de reconnexion n'a plus lieu
+  // d'être : sans ça, "Retour au menu" (qui recharge la page) ramènerait
+  // automatiquement vers cette même partie terminée.
+  if (state.gameOver) clearSession();
 });
 
 // Ne connaît aucune règle du jeu : lit juste les nouvelles lignes du
@@ -748,13 +832,21 @@ function renderPlayers(state) {
         ? " (activé, en attente)"
         : ""
       : "";
+    const powerDef = player.power && player.power.id ? ReachUpPowers.findPower(player.power.id) : null;
+    const powerBadgeHtml = player.power
+      ? player.power.hidden
+        ? `<p class="power-badge">🔒 Pouvoir en réserve${powerStatus}</p>`
+        : powerDef
+        ? `<p class="power-badge">${powerDef.icon} ${powerDef.name}${powerStatus}</p>`
+        : ""
+      : "";
 
     card.innerHTML = `
       <h3>${player.name}${player.id === myPlayerId ? " (toi)" : ""}</h3>
       <p class="player-money" data-money-for="${player.id}">💰 ${player.money}</p>
       <p>📍 ${ReachUpBoardView.tileSwatch(tile)} ${tile.name}</p>
       <p>🏷️ ${propertiesCount} propriété(s)</p>
-      ${player.power ? `<p class="power-badge">${ReachUpPowers.findPower(player.power.id).icon} ${ReachUpPowers.findPower(player.power.id).name}${powerStatus}</p>` : ""}
+      ${powerBadgeHtml}
       <p class="player-status">${statusLabel}</p>
     `;
     playersPanel.appendChild(card);
@@ -815,6 +907,7 @@ function renderActionArea(state) {
       statsModal.hidden = false;
     });
     document.getElementById("btn-return-menu").addEventListener("click", () => {
+      clearSession();
       window.location.reload();
     });
     return;
@@ -839,6 +932,28 @@ function renderActionArea(state) {
       });
     } else {
       box.innerHTML = `<p>⏳ En attente que <strong>${debtor.name}</strong> règle sa situation financière...</p>`;
+      actionArea.appendChild(box);
+    }
+    return;
+  }
+
+  // Cas -0.75 : une carte Destin/Spéciale attend d'être tirée (clic requis).
+  if (state.pendingChanceDraw) {
+    const box = document.createElement("div");
+    box.className = "action-box";
+    if (state.pendingChanceDraw.playerId === myPlayerId) {
+      const label = state.pendingChanceDraw.tileType === "special" ? "Carte Spéciale" : "Carte Destin";
+      box.innerHTML = `
+        <p>🎴 Une ${label} t'attend...</p>
+        <button id="btn-draw-chance" class="btn-primary">Tirer la carte</button>
+      `;
+      actionArea.appendChild(box);
+      document.getElementById("btn-draw-chance").addEventListener("click", () => {
+        socket.emit("game:drawChanceCard");
+      });
+    } else {
+      const drawerName = state.players[state.pendingChanceDraw.playerId].name;
+      box.innerHTML = `<p class="action-box--waiting">🎴 ${drawerName} s'apprête à tirer une carte...</p>`;
       actionArea.appendChild(box);
     }
     return;
@@ -1211,6 +1326,19 @@ function renderPowerModal() {
     </div>
   `;
 
+  if (!me.power.used) {
+    const cost = latestGameState.powerRerollCost || 150;
+    const canAfford = me.money >= cost;
+    html += `
+      <div class="trade-form">
+        <button id="btn-reroll-power" class="btn-text-link" type="button" ${canAfford ? "" : "disabled"}>
+          🔄 Changer de pouvoir (${cost})
+        </button>
+        ${canAfford ? "" : `<p class="properties-empty">Pas assez d'argent pour changer de pouvoir.</p>`}
+      </div>
+    `;
+  }
+
   if (me.power.used) {
     html += `<p class="properties-empty">Ce pouvoir a déjà été utilisé.</p>`;
   } else if (power.mode === "arm" && me.power.armed) {
@@ -1320,6 +1448,11 @@ function renderPowerModal() {
   const armBtn = document.getElementById("btn-arm-power");
   if (armBtn) {
     armBtn.addEventListener("click", () => socket.emit("game:armPower"));
+  }
+
+  const rerollBtn = document.getElementById("btn-reroll-power");
+  if (rerollBtn) {
+    rerollBtn.addEventListener("click", () => socket.emit("game:rerollPower"));
   }
 
   const useBtn = document.getElementById("btn-use-power");
