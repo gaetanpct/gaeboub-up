@@ -394,6 +394,12 @@
   function updateBoard(state, myPlayerId) {
     if (!boardEl) initBoard(state.board);
 
+    // Lueur pulsante autour de TOUT le plateau dès qu'un événement mondial
+    // est actif — pour que l'œil le remarque même sans lire le bandeau de
+    // texte, un peu comme les cases désactivées qui clignotent.
+    boardEl.classList.toggle("board-grid--event-active", !!state.activeEvent);
+    boardEl.classList.toggle("board-grid--apocalypse", !!state.apocalypseActive);
+
     const disabledTiles =
       state.activeEvent && state.activeEvent.id === "disabled_zones" && state.activeEvent.disabledTiles
         ? state.activeEvent.disabledTiles

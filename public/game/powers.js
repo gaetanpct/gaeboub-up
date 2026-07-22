@@ -136,6 +136,56 @@
     return pool[Math.floor(Math.random() * pool.length)].id;
   }
 
+  // ---- Pouvoirs APOCALYPTIQUES — distribués uniquement si le mode
+  // Apocalypse se déclenche, bien plus puissants que la normale.
+  const APOCALYPSE_POWERS = [
+    {
+      id: "apoc_targeted_crash",
+      name: "☠️ Krach ciblé",
+      icon: "📉",
+      mode: "instant",
+      description: "Choisis un groupe adverse : son multiplicateur de chaos s'effondre à x0.2 pour les prochains tours.",
+    },
+    {
+      id: "apoc_personal_boom",
+      name: "☠️ Boom personnel",
+      icon: "📈",
+      mode: "instant",
+      description: "Un de tes groupes reçoit un multiplicateur de chaos x5 pour les prochains tours.",
+    },
+    {
+      id: "apoc_forced_redistribution",
+      name: "☠️ Redistribution forcée",
+      icon: "💥",
+      mode: "instant",
+      description: "Le joueur le plus riche verse 30% de son argent liquide au joueur le plus pauvre (toi y compris si concerné).",
+    },
+    {
+      id: "apoc_targeted_tax",
+      name: "☠️ Taxe ciblée",
+      icon: "🎯",
+      mode: "instant",
+      description: "Choisis un adversaire : il paie immédiatement 300 à la banque.",
+    },
+    {
+      id: "apoc_crisis_shield",
+      name: "☠️ Bouclier de crise",
+      icon: "🛡️",
+      mode: "arm",
+      description: "Active-le à ton tour : le prochain loyer que tu payes est réduit de 75%, quel que soit le chaos ambiant.",
+    },
+    {
+      id: "apoc_liquidity_crisis",
+      name: "☠️ Crise de liquidité",
+      icon: "🏦",
+      mode: "instant",
+      description: "Tous les autres joueurs perdent 15% de leur argent liquide, versé directement à la banque.",
+    },
+  ];
+  function findApocalypsePower(id) {
+    return APOCALYPSE_POWERS.find((p) => p.id === id) || null;
+  }
+
   return {
     POWERS,
     STEAL_AMOUNT,
@@ -147,5 +197,7 @@
     HOUSE_WRECKER_COUNT,
     findPower,
     randomPowerId,
+    APOCALYPSE_POWERS,
+    findApocalypsePower,
   };
 });

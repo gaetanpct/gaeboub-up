@@ -591,6 +591,114 @@
     return !!(result && result.ok);
   }
 
+  // Société Immobilière : dernière chance. Ne coûte rien à tenter (le
+  // moteur refuse proprement si les conditions ne sont pas réunies), donc
+  // l'IA vérifie systématiquement — et investit son excédent de
+  // trésorerie tant qu'un palier reste atteignable sans toucher sa
+  // réserve de sécurité.
+  function considerRealEstateCompany(engine, state, me, profile) {
+    if (!me.realEstateCompany) {
+      const check = engine.canFormRealEstateCompany(me.id);
+      if (!check.ok) return false;
+      const result = engine.formRealEstateCompany(me.id);
+      return !!(result && result.ok);
+    }
+    const tiers = state.realEstateCompanyTiers || [];
+    const nextTier = tiers.find((t) => t.invested > me.realEstateCompany.totalInvested);
+    if (!nextTier) return false; // déjà au palier maximum
+    const reserve = safeReserve(state, profile);
+    const needed = nextTier.invested - me.realEstateCompany.totalInvested;
+    if (me.money - needed < reserve) return false; // pas encore de quoi franchir ce palier sans se mettre à risque
+    const result = engine.investInRealEstateCompany(me.id, needed);
+    return !!(result && result.ok);
+  }
+
+  // Propose le vote d'enchère globale si la construction est bloquée par
+  // manque de propriétés vendues ET que ÇA ME BLOQUE MOI (je possède un
+  // groupe complet que je ne peux pas encore développer) — pas juste par
+  // principe.
+  function considerProposingGlobalAuction(engine, state, me, profile) {
+    if (!state.buildOnlyWhenSoldOut) return false;
+    if (state.pendingAuctionVote || state.pendingApocalypseVote) return false;
+    const unsoldCount = state.board.filter((t) => OWNABLE_TYPES.includes(t.type) && t.owner === null).length;
+    if (unsoldCount === 0) return false;
+
+    const myGroups = [...new Set(state.board.filter((t) => t.type === "property" && t.owner === me.id).map((t) => t.group))];
+    const blockedByThis = myGroups.some((g) => {
+      const tiles = tilesOfGroup(state, g);
+      return tiles.every((t) => t.owner === me.id) && tiles.some((t) => (t.houses || 0) < 5 && !t.mortgaged);
+    });
+    if (!blockedByThis) return false;
+
+    const result = engine.proposeGlobalAuction(me.id);
+    return !!(result && result.ok);
+  }
+
+  // Ne propose l'Apocalypse qu'en vrai dernier recours : clairement
+  // dernier au classement, partie bien entamée, et pas systématiquement
+  // (reste un choix risqué parmi d'autres, pas un réflexe).
+  function considerProposingApocalypse(engine, state, me, profile) {
+    if (!state.apocalypseAllowed || state.apocalypseActive || state.pendingApocalypseVote || state.pendingAuctionVote) return false;
+    const activePlayers = state.players.filter((p) => !p.bankrupt);
+    if (activePlayers.length < 2) return false;
+    const rank = myRank(state, me.id);
+    if (rank !== activePlayers.length) return false; // seulement si VRAIMENT dernier
+    if (state.turnNumber < 20) return false; // laisse le jeu normal se dérouler d'abord
+    if (!chance(0.15)) return false;
+
+    const result = engine.proposeApocalypse(me.id);
+    return !!(result && result.ok);
+  }
+
+  // Utilise ses pouvoirs apocalyptiques de façon ciblée : frappe le leader
+  // quand c'est offensif, se renforce soi-même quand c'est constructif.
+  function considerApocalypsePowers(engine, state, me, profile) {
+    if (!me.apocalypsePower || me.apocalypsePower.used) return false;
+    const powerId = me.apocalypsePower.id;
+
+    if (powerId === "apoc_crisis_shield") {
+      if (me.apocalypsePower.armed) return false;
+      const result = engine.armApocalypsePower(me.id);
+      return !!(result && result.ok);
+    }
+
+    const rivals = state.players.filter((p) => !p.bankrupt && p.id !== me.id);
+    const leader = [...rivals].sort((a, b) => netWorthOf(state, b.id) - netWorthOf(state, a.id))[0];
+
+    if (powerId === "apoc_targeted_crash") {
+      if (!leader) return false;
+      const theirGroups = [...new Set(state.board.filter((t) => t.type === "property" && t.owner === leader.id).map((t) => t.group))];
+      if (theirGroups.length === 0) return false;
+      const result = engine.useApocalypseTargetedCrash(me.id, theirGroups[0]);
+      return !!(result && result.ok);
+    }
+
+    if (powerId === "apoc_personal_boom") {
+      const myGroups = [...new Set(state.board.filter((t) => t.type === "property" && t.owner === me.id).map((t) => t.group))];
+      if (myGroups.length === 0) return false;
+      const result = engine.useApocalypsePersonalBoom(me.id, myGroups[0]);
+      return !!(result && result.ok);
+    }
+
+    if (powerId === "apoc_forced_redistribution") {
+      const result = engine.useApocalypseForcedRedistribution(me.id);
+      return !!(result && result.ok);
+    }
+
+    if (powerId === "apoc_targeted_tax") {
+      if (!leader) return false;
+      const result = engine.useApocalypseTargetedTax(me.id, leader.id);
+      return !!(result && result.ok);
+    }
+
+    if (powerId === "apoc_liquidity_crisis") {
+      const result = engine.useApocalypseLiquidityCrisis(me.id);
+      return !!(result && result.ok);
+    }
+
+    return false;
+  }
+
   function considerBuilding(engine, state, me, profile) {
     let acted = false;
     let safety = 0;
@@ -885,8 +993,20 @@
     if (handlePowerBeforeRoll(engine, state, me, profile)) {
       return { kind: "power", complex: true };
     }
+    if (considerApocalypsePowers(engine, state, me, profile)) {
+      return { kind: "apocalypsePower", complex: true };
+    }
+    if (considerProposingGlobalAuction(engine, state, me, profile)) {
+      return { kind: "proposeGlobalAuction", complex: false };
+    }
+    if (considerProposingApocalypse(engine, state, me, profile)) {
+      return { kind: "proposeApocalypse", complex: false };
+    }
     if (considerBuilding(engine, state, me, profile)) {
       return { kind: "build", complex: true };
+    }
+    if (considerRealEstateCompany(engine, state, me, profile)) {
+      return { kind: "realEstateCompany", complex: true };
     }
     if (considerBuyingInsurance(engine, state, me, profile)) {
       return { kind: "buyInsurance", complex: true };
@@ -949,6 +1069,24 @@
     if (state.pendingChanceDraw && state.pendingChanceDraw.playerId === playerId) {
       const result = engine.drawChanceCard(playerId);
       return result && result.ok ? { kind: "drawChanceCard", complex: false } : null;
+    }
+
+    if (state.pendingAuctionVote && state.pendingAuctionVote.votes[playerId] === undefined) {
+      // Toujours POUR : bloquer indéfiniment la construction ne profite à
+      // personne, l'IA elle-même y compris — mieux vaut débloquer la partie.
+      const result = engine.voteOnGlobalAuction(playerId, true);
+      return result && result.ok ? { kind: "voteGlobalAuction", complex: false } : null;
+    }
+
+    if (state.pendingApocalypseVote && state.pendingApocalypseVote.votes[playerId] === undefined) {
+      // Le chaos profite à qui n'a rien à perdre : POUR si dans la moitié
+      // la plus faible du classement, CONTRE si en tête (rien à gagner à
+      // déstabiliser une position déjà favorable).
+      const rank = myRank(state, me.id);
+      const totalActive = state.players.filter((p) => !p.bankrupt).length;
+      const accept = rank > totalActive / 2;
+      const result = engine.voteOnApocalypse(playerId, accept);
+      return result && result.ok ? { kind: "voteApocalypse", complex: false } : null;
     }
 
     if (state.pendingDecision && state.pendingDecision.playerId === playerId) {

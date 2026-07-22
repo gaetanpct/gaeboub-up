@@ -130,6 +130,9 @@ socket.on("room:error", (message) => {
     document.getElementById("trade-error").textContent = message;
   } else if (!propertiesModal.hidden) {
     document.getElementById("properties-error").textContent = message;
+  } else if (!menuModal.hidden) {
+    const el = document.getElementById("rec-feedback");
+    if (el) el.textContent = message;
   } else if (!screens.home.hidden) {
     homeError.textContent = message;
   } else if (!screens.lobby.hidden) {
@@ -698,6 +701,11 @@ function renderSummaryModal() {
 
   const chips = buildActiveRuleChips(state);
 
+  const me = state.players.find((p) => p.id === myPlayerId);
+  const recHtml = renderRealEstateCompanySection(me);
+  const auctionVoteHtml = renderGlobalAuctionSection(state, me);
+  const apocalypseHtml = renderApocalypseSection(state, me);
+
   document.getElementById("menu-summary-content").innerHTML = `
     <p><strong>Tour</strong> ${state.turnNumber}${state.turnLimit ? ` / ${state.turnLimit}` : ""} — au tour de <strong>${state.gameOver ? "—" : current.name}</strong></p>
     <h3 class="trade-section-title">Classement (valeur totale)</h3>
@@ -707,7 +715,107 @@ function renderSummaryModal() {
     <h3 class="trade-section-title">En cours</h3>
     <p class="properties-empty">💳 ${activeLoansCount} prêt(s) actif(s) — 🛡️ ${activeInsuranceCount} assurance(s) active(s)</p>
     ${chips ? `<h3 class="trade-section-title">Règles actives pour cette partie</h3><div class="active-rules-chips">${chips}</div>` : ""}
+    ${recHtml}
+    ${auctionVoteHtml}
+    ${apocalypseHtml}
   `;
+  wireRealEstateCompanyButtons();
+  const proposeBtn = document.getElementById("btn-propose-global-auction");
+  if (proposeBtn) proposeBtn.addEventListener("click", () => socket.emit("game:proposeGlobalAuction"));
+  const proposeApocBtn = document.getElementById("btn-propose-apocalypse");
+  if (proposeApocBtn) proposeApocBtn.addEventListener("click", () => socket.emit("game:proposeApocalypse"));
+}
+
+// Enchère globale des propriétés restantes — seulement pertinent quand la
+// construction est bloquée par manque de ventes. Le vote lui-même, s'il
+// est en cours, s'affiche déjà dans la zone d'action (plus visible et
+// urgent) — ici on ne montre que le bouton pour EN PROPOSER un nouveau.
+// Mode Apocalypse : bouton pour la déclencher (si autorisée, pas déjà
+// active, pas de vote en cours), ou affichage du chaos actuel une fois
+// active (intensité, multiplicateurs par groupe).
+function renderApocalypseSection(state, me) {
+  if (!state.apocalypseAllowed) return "";
+  if (state.apocalypseActive) {
+    const multipliersHtml = Object.entries(state.apocalypseGroupMultipliers || {})
+      .map(([group, data]) => `<li>${group} : x${data.multiplier}</li>`)
+      .join("");
+    return `
+      <h3 class="trade-section-title">☠️ Apocalypse active</h3>
+      <p class="properties-empty">Intensité actuelle : ${state.apocalypseIntensity.toFixed(2)} (ne fait qu'augmenter, irréversible).</p>
+      <ul class="reference-list">${multipliersHtml}</ul>
+    `;
+  }
+  if (state.pendingApocalypseVote) return ""; // déjà visible dans la zone d'action
+  return `
+    <h3 class="trade-section-title">☠️ Mode Apocalypse</h3>
+    <p class="properties-empty">Déclenche un chaos financier irréversible, cumulatif avec tout le reste. Vote des autres joueurs requis.</p>
+    <button id="btn-propose-apocalypse" class="btn-secondary">Proposer l'Apocalypse</button>
+  `;
+}
+
+function renderGlobalAuctionSection(state, me) {
+  if (!state.buildOnlyWhenSoldOut) return "";
+  if (state.pendingAuctionVote) return ""; // déjà visible ailleurs, pas la peine de dupliquer
+  if (state.pendingAuction) return ""; // une liquidation (ou toute autre enchère) tourne déjà
+  const unsoldCount = state.board.filter((t) => ["property", "airport", "utility"].includes(t.type) && t.owner === null).length;
+  if (unsoldCount === 0) return "";
+  return `
+    <h3 class="trade-section-title">🚧 Construction bloquée</h3>
+    <p class="properties-empty">Il reste ${unsoldCount} propriété(s) libre(s) — la construction est bloquée pour tout le monde tant qu'elles n'ont pas trouvé de propriétaire.</p>
+    <button id="btn-propose-global-auction" class="btn-secondary">Proposer un vote pour les mettre toutes aux enchères</button>
+  `;
+}
+
+// Société Immobilière — mécanique de dernière chance. Toujours affichée
+// (les conditions précises sont assez rares/complexes pour qu'on laisse
+// simplement le serveur donner la vraie raison si ce n'est pas encore
+// accessible, plutôt que de dupliquer toute la logique côté client).
+function renderRealEstateCompanySection(me) {
+  if (!me) return "";
+  if (me.realEstateCompany) {
+    const tiers = (latestGameState.realEstateCompanyTiers || []);
+    const nextTier = tiers.find((t) => t.invested > me.realEstateCompany.totalInvested);
+    return `
+      <h3 class="trade-section-title">🏢 Société Immobilière</h3>
+      <p class="properties-empty">
+        Active — multiplicateur actuel : <strong>x${me.realEstateCompany.multiplier}</strong> (investi : ${me.realEstateCompany.totalInvested})
+        ${nextTier ? `<br />Prochain palier (x${nextTier.multiplier}) à ${nextTier.invested} investis au total.` : "<br />Palier maximum atteint."}
+      </p>
+      ${
+        nextTier
+          ? `<div class="trade-form">
+               <input type="number" id="rec-invest-input" min="1" value="${Math.max(1, nextTier.invested - me.realEstateCompany.totalInvested)}" class="auction-input" />
+               <button id="btn-rec-invest">Investir</button>
+             </div>`
+          : ""
+      }
+      <p id="rec-feedback" class="properties-empty"></p>
+    `;
+  }
+  return `
+    <h3 class="trade-section-title">🏢 Société Immobilière</h3>
+    <p class="properties-empty">
+      Une dernière chance quand tu n'as aucun groupe complet, que tout le monde en a au moins un, et que le plateau est entièrement vendu et développé au maximum.
+    </p>
+    <button id="btn-rec-form" class="btn-secondary">Former ma Société Immobilière</button>
+    <p id="rec-feedback" class="properties-empty"></p>
+  `;
+}
+
+function wireRealEstateCompanyButtons() {
+  const formBtn = document.getElementById("btn-rec-form");
+  if (formBtn) {
+    formBtn.addEventListener("click", () => {
+      socket.emit("game:formRealEstateCompany");
+    });
+  }
+  const investBtn = document.getElementById("btn-rec-invest");
+  if (investBtn) {
+    investBtn.addEventListener("click", () => {
+      const amount = Number(document.getElementById("rec-invest-input").value) || 0;
+      socket.emit("game:investRealEstateCompany", { amount });
+    });
+  }
 }
 
 function renderGame(state) {
@@ -832,14 +940,8 @@ function renderPlayers(state) {
         ? " (activé, en attente)"
         : ""
       : "";
-    const powerDef = player.power && player.power.id ? ReachUpPowers.findPower(player.power.id) : null;
-    const powerBadgeHtml = player.power
-      ? player.power.hidden
-        ? `<p class="power-badge">🔒 Pouvoir en réserve${powerStatus}</p>`
-        : powerDef
-        ? `<p class="power-badge">${powerDef.icon} ${powerDef.name}${powerStatus}</p>`
-        : ""
-      : "";
+    const powerDef = player.power ? ReachUpPowers.findPower(player.power.id) : null;
+    const powerBadgeHtml = powerDef ? `<p class="power-badge">${powerDef.icon} ${powerDef.name}${powerStatus}</p>` : "";
 
     card.innerHTML = `
       <h3>${player.name}${player.id === myPlayerId ? " (toi)" : ""}</h3>
@@ -894,6 +996,55 @@ function renderActionArea(state) {
   const preserved = captureFormValues(actionArea);
   actionArea.innerHTML = "";
   try {
+  // Le vote pour l'enchère globale ne bloque PAS le reste (comme un
+  // échange, on peut y répondre à tout moment) — affiché en complément,
+  // jamais à la place des actions normales.
+  if (state.pendingAuctionVote) {
+    const box = document.createElement("div");
+    box.className = "action-box action-box--compact";
+    const hasVoted = state.pendingAuctionVote.votes[myPlayerId] !== undefined;
+    const proposerName = state.players[state.pendingAuctionVote.proposerId].name;
+    const yesCount = Object.values(state.pendingAuctionVote.votes).filter((v) => v === true).length;
+    const noCount = Object.values(state.pendingAuctionVote.votes).filter((v) => v === false).length;
+    if (!hasVoted) {
+      box.innerHTML = `
+        <p>🗳️ ${proposerName} propose de mettre aux enchères les ${state.pendingAuctionVote.unsoldTiles.length} propriété(s) encore libres.</p>
+        <p class="properties-empty">Pour l'instant : ${yesCount} pour, ${noCount} contre.</p>
+        <button id="btn-vote-yes" class="btn-primary">Voter POUR</button>
+        <button id="btn-vote-no">Voter CONTRE</button>
+      `;
+      actionArea.appendChild(box);
+      document.getElementById("btn-vote-yes").addEventListener("click", () => socket.emit("game:voteGlobalAuction", { accept: true }));
+      document.getElementById("btn-vote-no").addEventListener("click", () => socket.emit("game:voteGlobalAuction", { accept: false }));
+    } else {
+      box.innerHTML = `<p class="action-box--waiting">🗳️ Vote en cours (${yesCount} pour, ${noCount} contre) — en attente des autres joueurs...</p>`;
+      actionArea.appendChild(box);
+    }
+  }
+
+  if (state.pendingApocalypseVote) {
+    const box = document.createElement("div");
+    box.className = "action-box action-box--compact";
+    const hasVoted = state.pendingApocalypseVote.votes[myPlayerId] !== undefined;
+    const proposerName = state.players[state.pendingApocalypseVote.proposerId].name;
+    const yesCount = Object.values(state.pendingApocalypseVote.votes).filter((v) => v === true).length;
+    const noCount = Object.values(state.pendingApocalypseVote.votes).filter((v) => v === false).length;
+    if (!hasVoted) {
+      box.innerHTML = `
+        <p>☠️ ${proposerName} propose de déclencher l'APOCALYPSE — irréversible !</p>
+        <p class="properties-empty">Pour l'instant : ${yesCount} pour, ${noCount} contre.</p>
+        <button id="btn-vote-apoc-yes" class="btn-primary">Voter POUR</button>
+        <button id="btn-vote-apoc-no">Voter CONTRE</button>
+      `;
+      actionArea.appendChild(box);
+      document.getElementById("btn-vote-apoc-yes").addEventListener("click", () => socket.emit("game:voteApocalypse", { accept: true }));
+      document.getElementById("btn-vote-apoc-no").addEventListener("click", () => socket.emit("game:voteApocalypse", { accept: false }));
+    } else {
+      box.innerHTML = `<p class="action-box--waiting">☠️ Vote Apocalypse en cours (${yesCount} pour, ${noCount} contre) — en attente des autres joueurs...</p>`;
+      actionArea.appendChild(box);
+    }
+  }
+
   if (state.gameOver) {
     const box = document.createElement("div");
     box.className = "action-box";
@@ -1304,20 +1455,111 @@ function renderPropertyRow(tile, index) {
   `;
 }
 
+// Pouvoir apocalyptique : bien plus puissant que la normale, distribué
+// uniquement après le déclenchement de l'Apocalypse. Certains ont besoin
+// d'une cible (groupe adverse, un de mes groupes, ou un joueur).
+function renderApocalypsePowerSection(me, isMyTurn) {
+  const power = ReachUpPowers.findApocalypsePower(me.apocalypsePower.id);
+  if (!power) return "";
+
+  let html = `
+    <div class="property-row" style="margin-top: 1rem; border-top: 1px solid var(--border-subtle); padding-top: 0.8rem;">
+      <div class="property-row__info">
+        <strong>${power.icon} ${power.name}</strong><br />
+        ${power.description}
+      </div>
+    </div>
+  `;
+
+  if (me.apocalypsePower.used) {
+    html += `<p class="properties-empty">Ce pouvoir apocalyptique a déjà été utilisé.</p>`;
+    return html;
+  }
+  if (power.mode === "arm" && me.apocalypsePower.armed) {
+    html += `<p class="properties-empty">🔔 Activé — en attente de son effet.</p>`;
+    return html;
+  }
+  if (!isMyTurn) {
+    html += `<p class="properties-empty">⏳ Ce pouvoir ne peut être activé qu'à ton tour.</p>`;
+    return html;
+  }
+
+  if (power.mode === "arm") {
+    html += `
+      <div class="trade-form">
+        <button id="btn-arm-apoc-power" class="btn-primary">Activer maintenant</button>
+      </div>
+    `;
+  } else if (power.id === "apoc_targeted_crash") {
+    const groups = [...new Set(latestGameState.board.filter((t) => t.type === "property" && t.owner !== null && t.owner !== myPlayerId).map((t) => t.group))];
+    if (groups.length === 0) {
+      html += `<p class="properties-empty">Aucun groupe adverse à cibler pour l'instant.</p>`;
+    } else {
+      const options = groups.map((g) => `<option value="${g}">${g}</option>`).join("");
+      html += `
+        <div class="trade-form">
+          <select id="power-apoc-group">${options}</select>
+          <button id="btn-use-apoc-power" class="btn-primary">Déclencher le Krach</button>
+        </div>
+      `;
+    }
+  } else if (power.id === "apoc_personal_boom") {
+    const groups = [...new Set(latestGameState.board.filter((t) => t.type === "property" && t.owner === myPlayerId).map((t) => t.group))];
+    if (groups.length === 0) {
+      html += `<p class="properties-empty">Tu ne possèdes aucune propriété pour l'instant.</p>`;
+    } else {
+      const options = groups.map((g) => `<option value="${g}">${g}</option>`).join("");
+      html += `
+        <div class="trade-form">
+          <select id="power-apoc-group">${options}</select>
+          <button id="btn-use-apoc-power" class="btn-primary">Déclencher le Boom</button>
+        </div>
+      `;
+    }
+  } else if (power.id === "apoc_targeted_tax") {
+    const targets = latestGameState.players.filter((p) => p.id !== myPlayerId && !p.bankrupt);
+    if (targets.length === 0) {
+      html += `<p class="properties-empty">Aucune cible disponible.</p>`;
+    } else {
+      const options = targets.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+      html += `
+        <div class="trade-form">
+          <select id="power-apoc-target">${options}</select>
+          <button id="btn-use-apoc-power" class="btn-primary">Taxer</button>
+        </div>
+      `;
+    }
+  } else {
+    // apoc_forced_redistribution, apoc_liquidity_crisis : aucune cible à choisir.
+    html += `
+      <div class="trade-form">
+        <button id="btn-use-apoc-power" class="btn-primary">Déclencher</button>
+      </div>
+    `;
+  }
+
+  return html;
+}
+
 function renderPowerModal() {
   if (!latestGameState) return;
   document.getElementById("power-error").textContent = "";
 
   const me = latestGameState.players.find((p) => p.id === myPlayerId);
-  if (!me || !me.power) {
+  if (!me || (!me.power && !me.apocalypsePower)) {
     powerContent.innerHTML = `<p class="properties-empty">Tu n'as reçu aucun pouvoir pour cette partie.</p>`;
     return;
   }
 
-  const power = ReachUpPowers.findPower(me.power.id);
   const isMyTurn = !latestGameState.gameOver && latestGameState.currentPlayerIndex === myPlayerId;
+  let html = "";
+  let power = null;
 
-  let html = `
+  if (!me.power) {
+    html += `<p class="properties-empty">Tu n'as pas de pouvoir normal pour cette partie.</p>`;
+  } else {
+  power = ReachUpPowers.findPower(me.power.id);
+  html += `
     <div class="property-row">
       <div class="property-row__info">
         <strong>${power.icon} ${power.name}</strong><br />
@@ -1442,6 +1684,11 @@ function renderPowerModal() {
       `;
     }
   }
+  } // fin du bloc "pouvoir normal"
+
+  if (me.apocalypsePower) {
+    html += renderApocalypsePowerSection(me, isMyTurn);
+  }
 
   powerContent.innerHTML = html;
 
@@ -1498,6 +1745,25 @@ function renderPowerModal() {
       socket.emit("game:useForcedSwap", { tileIndexA, tileIndexB });
     });
   }
+
+  // ---- Câblage du pouvoir apocalyptique (indépendant du pouvoir normal) ----
+  const armApocBtn = document.getElementById("btn-arm-apoc-power");
+  if (armApocBtn) {
+    armApocBtn.addEventListener("click", () => socket.emit("game:armApocalypsePower"));
+  }
+  const useApocBtn = document.getElementById("btn-use-apoc-power");
+  if (useApocBtn && me.apocalypsePower) {
+    useApocBtn.addEventListener("click", () => {
+      const powerId = me.apocalypsePower.id;
+      const payload = {};
+      if (powerId === "apoc_targeted_crash" || powerId === "apoc_personal_boom") {
+        payload.group = document.getElementById("power-apoc-group").value;
+      } else if (powerId === "apoc_targeted_tax") {
+        payload.targetId = Number(document.getElementById("power-apoc-target").value);
+      }
+      socket.emit("game:useApocalypsePower", payload);
+    });
+  }
 }
 
 // Fenêtre de détail d'une case : cliquée depuis le plateau (n'importe
@@ -1551,7 +1817,7 @@ function renderTileDetailModal(tileIndex) {
       <p>Loyer = lancer de dés × <strong>4</strong> si tu possèdes cette seule compagnie, × <strong>10</strong> si tu possèdes les deux.</p>
     `;
   } else if (tile.type === "tax") {
-    content.innerHTML = `<p>Case Taxe : paie <strong>${tile.amount}</strong> en y passant.</p>`;
+    content.innerHTML = `<p>Case Taxe : paie un montant tiré au sort (50, 75, 100 ou 150) en y passant.</p>`;
   } else {
     const descriptions = {
       go: "Case Départ : touche ton salaire chaque fois que tu passes par ici.",

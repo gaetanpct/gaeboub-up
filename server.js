@@ -256,6 +256,26 @@ function findAIPlayerNeedingToAct(room) {
     return null;
   }
 
+  // Priorité 2b : un vote pour l'enchère globale est en cours, une IA n'a pas encore voté.
+  if (engine.pendingAuctionVote) {
+    const activeIds = engine.activePlayers().map((p) => p.id);
+    const notYetVoted = activeIds.filter((id) => engine.pendingAuctionVote.votes[id] === undefined);
+    for (const pid of notYetVoted) {
+      const aiP = findAIRoomPlayer(room, pid);
+      if (aiP) return { player: aiP, kind: "voteGlobalAuction", complex: false };
+    }
+  }
+
+  // Priorité 2c : un vote pour l'Apocalypse est en cours, une IA n'a pas encore voté.
+  if (engine.pendingApocalypseVote) {
+    const activeIds = engine.activePlayers().map((p) => p.id);
+    const notYetVoted = activeIds.filter((id) => engine.pendingApocalypseVote.votes[id] === undefined);
+    for (const pid of notYetVoted) {
+      const aiP = findAIRoomPlayer(room, pid);
+      if (aiP) return { player: aiP, kind: "voteApocalypse", complex: false };
+    }
+  }
+
   // Priorité 3 : décision d'achat en attente.
   if (engine.pendingDecision) {
     const aiP = findAIRoomPlayer(room, engine.pendingDecision.playerId);
@@ -348,20 +368,6 @@ function runNextAIAction(room) {
 // reçoit ici les vraies mises déjà déposées par les autres.
 function buildStateForPlayer(baseState, playerId, settings, engine) {
   let state = baseState;
-
-  // Confidentialité des pouvoirs : chacun voit le détail du SIEN, mais ne
-  // doit pas savoir LEQUEL les autres possèdent (juste qu'ils en ont un,
-  // et s'il a déjà été utilisé) — sinon ça donne un avantage stratégique
-  // injuste (anticiper précisément ce qu'un adversaire s'apprête à faire).
-  if (state.players) {
-    state = {
-      ...state,
-      players: state.players.map((p) => {
-        if (p.id === playerId || !p.power) return p;
-        return { ...p, power: { id: null, used: p.power.used, armed: false, hidden: true } };
-      }),
-    };
-  }
 
   if (settings.secretTrades) {
     state = {
@@ -1025,6 +1031,135 @@ io.on("connection", (socket) => {
   });
 
   // ---- Assurance (Phase 8e, formules multiples Phase 10) ----
+  socket.on("game:proposeApocalypse", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.proposeApocalypse(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:voteApocalypse", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.voteOnApocalypse(myPlayerId, !!payload.accept);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:armApocalypsePower", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.armApocalypsePower(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:useApocalypsePower", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const me = room.engine.players[myPlayerId];
+    const powerId = me && me.apocalypsePower ? me.apocalypsePower.id : null;
+    let result;
+    switch (powerId) {
+      case "apoc_targeted_crash":
+        result = room.engine.useApocalypseTargetedCrash(myPlayerId, payload.group);
+        break;
+      case "apoc_personal_boom":
+        result = room.engine.useApocalypsePersonalBoom(myPlayerId, payload.group);
+        break;
+      case "apoc_forced_redistribution":
+        result = room.engine.useApocalypseForcedRedistribution(myPlayerId);
+        break;
+      case "apoc_targeted_tax":
+        result = room.engine.useApocalypseTargetedTax(myPlayerId, payload.targetId);
+        break;
+      case "apoc_liquidity_crisis":
+        result = room.engine.useApocalypseLiquidityCrisis(myPlayerId);
+        break;
+      default:
+        result = { ok: false, reason: "Aucun pouvoir apocalyptique instantané à utiliser." };
+    }
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:proposeGlobalAuction", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.proposeGlobalAuction(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:voteGlobalAuction", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.voteOnGlobalAuction(myPlayerId, !!payload.accept);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:formRealEstateCompany", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.formRealEstateCompany(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:investRealEstateCompany", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.investInRealEstateCompany(myPlayerId, payload.amount);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
   socket.on("game:buyInsurance", (payload = {}) => {
     const room = getRoom(socket);
     if (!room || !room.started || !room.engine) return;

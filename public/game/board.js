@@ -93,6 +93,15 @@
   // Paquet de cartes "Destin" — tiré au hasard avec remise. Un mélange de
   // gains/pertes d'argent, d'effets de groupe (tout le monde paie/reçoit),
   // et de déplacements — comme un vrai jeu de plateau économique.
+  // Quand une carte fait payer le joueur À LA BANQUE (l'argent quitte
+  // vraiment le jeu, contrairement à un versement à un autre joueur),
+  // ce montant part aussi dans la cagnotte de Vacances si elle est
+  // activée — exactement comme une case Taxe.
+  function payCardToBank(engine, player, amount) {
+    engine.pay(player, null, amount);
+    if (engine.vacationPotEnabled) engine.vacationPot += amount;
+  }
+
   const CHANCE_CARDS = [
     {
       description: "Vous gagnez un prix de mots croisés (+100).",
@@ -100,7 +109,7 @@
     },
     {
       description: "Erreur fiscale : vous payez une pénalité (-75).",
-      effect: (engine, player) => engine.pay(player, null, 75),
+      effect: (engine, player) => payCardToBank(engine, player, 75),
     },
     {
       description: "Avancez jusqu'à la case Départ (touchez 200).",
@@ -120,7 +129,7 @@
     },
     {
       description: "Frais de scolarité à payer (-50).",
-      effect: (engine, player) => engine.pay(player, null, 50),
+      effect: (engine, player) => payCardToBank(engine, player, 50),
     },
     {
       description: "Vous héritez d'une petite somme (+100).",
@@ -150,7 +159,7 @@
         const cost = engine.board
           .filter((t) => t.owner === player.id && t.type === "property" && t.houses > 0)
           .reduce((sum, t) => sum + (t.houses === 5 ? 100 : t.houses * 25), 0);
-        if (cost > 0) engine.pay(player, null, cost);
+        if (cost > 0) payCardToBank(engine, player, cost);
       },
     },
     {
@@ -159,7 +168,7 @@
     },
     {
       description: "Amende pour excès de vitesse (-40).",
-      effect: (engine, player) => engine.pay(player, null, 40),
+      effect: (engine, player) => payCardToBank(engine, player, 40),
     },
     {
       description: "Vous retrouvez un billet oublié dans une veste (+30).",
@@ -167,7 +176,7 @@
     },
     {
       description: "Frais de notaire imprévus (-60).",
-      effect: (engine, player) => engine.pay(player, null, 60),
+      effect: (engine, player) => payCardToBank(engine, player, 60),
     },
     {
       description: "Bonus de fidélité de la banque (+80).",
@@ -175,7 +184,7 @@
     },
     {
       description: "Contrôle fiscal (-90).",
-      effect: (engine, player) => engine.pay(player, null, 90),
+      effect: (engine, player) => payCardToBank(engine, player, 90),
     },
     {
       description: "Avancez de 3 cases.",
@@ -212,6 +221,117 @@
       effect: (engine, player) => {
         const newIndex = engine._findNearestTileOfType(player.position, "utility");
         engine._landOnTile(player, newIndex);
+      },
+    },
+
+    // ---- Nouvelles cartes ----
+    {
+      description: "Remboursement d'impôts inattendu (+130).",
+      effect: (engine, player) => engine.pay(null, player, 130),
+    },
+    {
+      description: "Réparation de toiture après une tempête (-70).",
+      effect: (engine, player) => payCardToBank(engine, player, 70),
+    },
+    {
+      description: "Un ami vous prête sa voiture : avancez de 4 cases.",
+      effect: (engine, player) => {
+        const newIndex = (player.position + 4) % engine.board.length;
+        engine._landOnTile(player, newIndex);
+      },
+    },
+    {
+      description: "Panne générale des transports : reculez de 4 cases.",
+      effect: (engine, player) => {
+        const newIndex = (player.position - 4 + engine.board.length) % engine.board.length;
+        engine._landOnTile(player, newIndex);
+      },
+    },
+    {
+      description: "Esprit d'économie : versez 40 dans la cagnotte de Vacances.",
+      effect: (engine, player) => {
+        if (engine.vacationPotEnabled) {
+          engine.pay(player, null, 40);
+          engine.vacationPot += 40;
+        } else {
+          engine.pay(player, null, 40); // sans cagnotte active, ça part simplement à la banque
+        }
+      },
+    },
+    {
+      description: "Petit geste de la mairie : récupérez 25% de la cagnotte de Vacances actuelle.",
+      effect: (engine, player) => {
+        if (engine.vacationPotEnabled && engine.vacationPot > 0) {
+          const amount = Math.floor(engine.vacationPot * 0.25);
+          if (amount > 0) {
+            engine.vacationPot -= amount;
+            engine.pay(null, player, amount);
+          }
+        }
+        // Pas de cagnotte active ou vide : la carte n'a simplement aucun effet.
+      },
+    },
+    {
+      description: "Coup de pouce de l'urbanisme : si vous possédez un groupe complet sans la moindre maison, construisez-y gratuitement une maison. Sinon, rien ne se passe.",
+      effect: (engine, player) => {
+        const groups = [...new Set(engine.board.filter((t) => t.type === "property" && t.owner === player.id).map((t) => t.group))];
+        for (const group of groups) {
+          const tiles = engine.board.filter((t) => t.type === "property" && t.group === group);
+          const allMine = tiles.every((t) => t.owner === player.id);
+          const noHouses = tiles.every((t) => (t.houses || 0) === 0 && !t.mortgaged);
+          if (allMine && noHouses) {
+            const target = tiles[0];
+            const idx = engine.board.indexOf(target);
+            target.houses = 1;
+            engine.addLog(`🏗️ ${player.name} reçoit gratuitement une maison sur ${target.name} grâce à sa carte !`);
+            return;
+          }
+        }
+      },
+    },
+    {
+      description: "Petit incendie de cuisine : vous perdez une maison au hasard chez vous (aucun remboursement). Si vous n'avez aucune maison, rien ne se passe.",
+      effect: (engine, player) => {
+        const withHouses = engine.board.filter((t) => t.type === "property" && t.owner === player.id && (t.houses || 0) > 0);
+        if (withHouses.length === 0) return;
+        const target = withHouses[Math.floor(Math.random() * withHouses.length)];
+        target.houses -= 1;
+        engine.addLog(`🔥 Un petit incendie détruit une maison de ${player.name} sur ${target.name} (aucun remboursement).`);
+      },
+    },
+    {
+      description: "Un notaire retrouve une vieille hypothèque : une de vos propriétés hypothéquées est levée gratuitement. Si vous n'en avez aucune, rien ne se passe.",
+      effect: (engine, player) => {
+        const mortgaged = engine.board.filter((t) => t.owner === player.id && t.mortgaged);
+        if (mortgaged.length === 0) return;
+        const target = mortgaged[Math.floor(Math.random() * mortgaged.length)];
+        target.mortgaged = false;
+        engine.addLog(`📜 L'hypothèque de ${player.name} sur ${target.name} est levée gratuitement !`);
+      },
+    },
+    {
+      description: "Frais de gestion locative (-55).",
+      effect: (engine, player) => payCardToBank(engine, player, 55),
+    },
+    {
+      description: "Remboursement d'une caution oubliée (+70).",
+      effect: (engine, player) => engine.pay(null, player, 70),
+    },
+    {
+      description: "Vous gagnez à la loterie de quartier (+150), mais 50 partent directement dans la cagnotte de Vacances.",
+      effect: (engine, player) => {
+        engine.pay(null, player, 150);
+        if (engine.vacationPotEnabled) {
+          engine.pay(player, null, 50);
+          engine.vacationPot += 50;
+        }
+      },
+    },
+    {
+      description: "Journée sans chance : reculez jusqu'à la case Prison la plus proche (simple visite, pas d'arrestation).",
+      effect: (engine, player) => {
+        const jailIndex = engine.board.findIndex((t) => t.type === "jail");
+        if (jailIndex >= 0) engine._landOnTile(player, jailIndex);
       },
     },
   ];

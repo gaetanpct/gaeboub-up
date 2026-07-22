@@ -446,6 +446,56 @@ button:disabled {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 
+.board-grid--event-active {
+  animation: board-event-glow 1.6s ease-in-out infinite;
+}
+
+@keyframes board-event-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 18px 4px rgba(224, 92, 92, 0.55);
+    border-color: var(--negative);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 32px 10px rgba(224, 92, 92, 0.85);
+    border-color: var(--copper);
+  }
+}
+
+/* Apocalypse active : bien plus dramatique et distinct qu'un simple
+   événement mondial — irréversible, donc l'ambiance visuelle doit le
+   rappeler en permanence sans avoir à lire le texte. */
+.board-grid--apocalypse {
+  animation: board-apocalypse-glow 1.1s ease-in-out infinite;
+  filter: saturate(0.75) contrast(1.05);
+}
+
+.board-grid--apocalypse::after {
+  content: "☠️";
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  font-size: 1.6rem;
+  z-index: 5;
+  filter: none;
+  animation: board-apocalypse-skull-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes board-apocalypse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6), 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 24px 6px rgba(140, 15, 15, 0.75);
+    border-color: #8c0f0f;
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6), 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 42px 14px rgba(200, 20, 20, 0.95);
+    border-color: #e05c5c;
+  }
+}
+
+@keyframes board-apocalypse-skull-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
+
 .board-tile {
   position: relative;
   background: var(--tile-bg);

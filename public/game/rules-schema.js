@@ -96,6 +96,7 @@
             "Si les événements mondiaux sont activés, tomber sur une carte Spéciale déclenche un événement temporaire (si aucun n'est déjà en cours). Sinon, elle tire un effet classique comme une carte Destin.",
           options: [
             { value: 0, label: "0 (classique)" },
+            { value: 1, label: "1" },
             { value: 2, label: "2" },
             { value: 4, label: "4" },
           ],
@@ -239,22 +240,21 @@
           type: "boolean",
           default: false,
         },
-      ],
-    },
-    {
-      category: "Durée",
-      rules: [
         {
-          id: "turnLimit",
-          label: "Limite de tours",
-          type: "select",
-          default: null,
-          options: [
-            { value: null, label: "Illimité" },
-            { value: 60, label: "60 tours" },
-            { value: 100, label: "100 tours" },
-            { value: 150, label: "150 tours" },
-          ],
+          id: "buildOnlyWhenSoldOut",
+          label: "🚧 Construction uniquement lorsque toutes les propriétés du plateau ont été achetées",
+          type: "boolean",
+          default: false,
+          info:
+            "Les groupes peuvent être complétés normalement, mais personne ne peut construire de maison/hôtel tant qu'il reste des propriétés libres sur le plateau. Un bouton permet alors de proposer un vote pour mettre aux enchères toutes les propriétés encore libres d'un coup.",
+        },
+        {
+          id: "apocalypseAllowed",
+          label: "☠️ Autoriser le mode Apocalypse",
+          type: "boolean",
+          default: false,
+          info:
+            "N'importe quel joueur peut proposer de déclencher l'Apocalypse à tout moment (vote des autres joueurs requis). Une fois déclenchée, c'est irréversible : chaque groupe reçoit un multiplicateur de loyer chaotique et instable qui évolue et s'intensifie au fil des tours, en plus de tout ce qui est déjà actif (événements, pouvoirs...). Des pouvoirs apocalyptiques bien plus puissants sont distribués à ce moment-là.",
         },
       ],
     },

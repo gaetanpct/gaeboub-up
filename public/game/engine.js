@@ -17,12 +17,12 @@
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
     const { BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES } = require("./board.js");
-    const { POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId } = require("./powers.js");
+    const { POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId, APOCALYPSE_POWERS, findApocalypsePower } = require("./powers.js");
     const { WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent } = require("./world-events.js");
     const { INSURANCE_PLANS } = require("./insurance-plans.js");
     module.exports = factory(
       BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
-      POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId,
+      POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId, APOCALYPSE_POWERS, findApocalypsePower,
       WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
       INSURANCE_PLANS
     );
@@ -33,14 +33,14 @@
     const ins = root.ReachUpInsurance;
     root.ReachUpEngine = factory(
       b.BOARD, b.CHANCE_CARDS, b.HOUSE_COST_BY_GROUP, b.RENT_MULTIPLIERS_BY_HOUSES,
-      p.POWERS, p.STEAL_AMOUNT, p.STEAL_MIN_TARGET_MONEY, p.DOUBLE_RENT_CAP, p.DISCOUNT_PURCHASE_PERCENT, p.BANK_LOAN_AMOUNT, p.RENT_COLLECTOR_DURATION_TURNS, p.HOUSE_WRECKER_COUNT, p.randomPowerId,
+      p.POWERS, p.STEAL_AMOUNT, p.STEAL_MIN_TARGET_MONEY, p.DOUBLE_RENT_CAP, p.DISCOUNT_PURCHASE_PERCENT, p.BANK_LOAN_AMOUNT, p.RENT_COLLECTOR_DURATION_TURNS, p.HOUSE_WRECKER_COUNT, p.randomPowerId, p.APOCALYPSE_POWERS, p.findApocalypsePower,
       w.WORLD_EVENTS, w.EVENT_DURATION_TURNS, w.FREQUENCY_PROBABILITY, w.randomEvent,
       ins.INSURANCE_PLANS
     );
   }
 })(typeof window !== "undefined" ? window : globalThis, function (
   BOARD_TEMPLATE, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
-  POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId,
+  POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId, APOCALYPSE_POWERS, findApocalypsePower,
   WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
   INSURANCE_PLANS
 ) {
@@ -48,6 +48,33 @@
   const SALARY = 200;
   const JAIL_FINE = 50;
   const MAX_JAIL_TURNS = 3;
+
+  // Société Immobilière — paliers d'investissement (montant CUMULÉ à
+  // investir pour atteindre ce multiplicateur). Rendement décroissant :
+  // chaque palier suivant coûte proportionnellement plus cher pour +1 de
+  // multiplicateur. Calibré sur l'économie réelle (argent de départ 1500,
+  // loyers de base 2 à 55) — modulaire et facile à réajuster ici.
+  const REAL_ESTATE_COMPANY_TIERS = [
+    { invested: 0, multiplier: 1 },
+    { invested: 200, multiplier: 2 },
+    { invested: 500, multiplier: 3 },
+    { invested: 900, multiplier: 4 },
+    { invested: 1400, multiplier: 5 },
+    { invested: 2000, multiplier: 6 },
+    { invested: 2700, multiplier: 7 },
+    { invested: 3500, multiplier: 8 },
+  ];
+
+  // ---- Mode APOCALYPSE ----
+  // Irréversible, cumulatif avec tout le reste (événements, pouvoirs,
+  // Société Immobilière...). Chaque groupe reçoit un multiplicateur de
+  // loyer chaotique, ré-évalué et intensifié à chaque tour complet — le
+  // but n'est jamais de juste doubler les loyers, mais de créer une vraie
+  // asymétrie (certains groupes explosent, d'autres s'effondrent), avec
+  // des pouvoirs beaucoup plus puissants que la normale.
+  // (Les pouvoirs APOCALYPSE_POWERS eux-mêmes sont définis dans
+  // powers.js, au même endroit que les pouvoirs normaux, et importés
+  // ci-dessus — client et moteur partagent ainsi la même source.)
 
   // Mélange Fisher-Yates — ne modifie pas le tableau d'origine.
   function shuffleArray(array) {
@@ -110,6 +137,16 @@
       const startingMoney = options.startingMoney || STARTING_MONEY;
       this.powersEnabled = !!options.powersEnabled;
       this.powerRerollCost = 150;
+      this.buildOnlyWhenSoldOut = !!options.buildOnlyWhenSoldOut;
+      this.pendingAuctionVote = null; // { proposerId, votes: {playerId: true/false}, unsoldTiles: [...] }
+      this.propertyLiquidationQueue = null; // [...tileIndices] en cours de liquidation après un vote accepté
+
+      this.apocalypseAllowed = !!options.apocalypseAllowed;
+      this.apocalypseActive = false;
+      this.apocalypseIntensity = 1;
+      this.apocalypseGroupMultipliers = {}; // { groupName: { multiplier, turnsUntilReroll } }
+      this.pendingApocalypseVote = null; // même forme que pendingAuctionVote
+      this._apocalypseTurnsSinceRoundStart = 0;
       this.players = playerNames.map((name, id) => ({
         id,
         name,
@@ -118,6 +155,8 @@
         inJail: false,
         jailTurns: 0,
         jailFreeCards: 0,
+        realEstateCompany: null, // { totalInvested, multiplier } — voir formRealEstateCompany
+        apocalypsePower: null, // { id, used, armed } — distribué uniquement si l'Apocalypse se déclenche
         bankrupt: false,
         power: this.powersEnabled ? { id: randomPowerId(playerNames.length < 3 ? ["forced_swap"] : []), used: false, armed: false } : null,
         insurance: null, // { planId, planName, turnsRemaining, coveragePercent }
@@ -258,6 +297,20 @@
         const bonus = Math.min(rent, DOUBLE_RENT_CAP);
         this.addLog(`💰 ${owner.name} déclenche son pouvoir : loyer majoré de ${bonus} (plafonné à ${DOUBLE_RENT_CAP}) !`);
         return rent + bonus;
+      }
+      return rent;
+    }
+
+    // Bouclier de crise (pouvoir apocalyptique) : réduit de 75% le PROCHAIN
+    // loyer payé par celui qui l'a activé, quel que soit le chaos ambiant —
+    // s'applique après le multiplicateur Apocalypse, jamais avant.
+    _applyApocalypseCrisisShield(payer, rent) {
+      if (payer.apocalypsePower && payer.apocalypsePower.id === "apoc_crisis_shield" && payer.apocalypsePower.armed && !payer.apocalypsePower.used) {
+        payer.apocalypsePower.used = true;
+        payer.apocalypsePower.armed = false;
+        const reduced = Math.round(rent * 0.25);
+        this.addLog(`🛡️ ${payer.name} active son Bouclier de crise : loyer réduit de 75% (${rent} → ${reduced}) !`);
+        return reduced;
       }
       return rent;
     }
@@ -547,6 +600,12 @@
       if (tile.owner !== playerId) return { ok: false, reason: "Tu ne possèdes pas cette propriété." };
       if (tile.mortgaged) return { ok: false, reason: "Cette propriété est hypothéquée." };
       if (!this.ownsFullSet(playerId, tile.group)) return { ok: false, reason: "Il faut posséder tout le groupe pour construire." };
+      if (this.buildOnlyWhenSoldOut) {
+        const unsoldTile = this.board.find((t) => ["property", "airport", "utility"].includes(t.type) && t.owner === null);
+        if (unsoldTile) {
+          return { ok: false, reason: "La construction est bloquée tant que toutes les propriétés du plateau n'ont pas été achetées." };
+        }
+      }
       if (tile.houses >= 5) return { ok: false, reason: "Cette propriété a déjà un hôtel." };
 
       const groupTiles = this.board.filter((t) => t.type === "property" && t.group === tile.group);
@@ -684,20 +743,37 @@
               break;
             }
             let rent;
+            const rec = this.players[tile.owner].realEstateCompany;
             if (tile.houses > 0) {
               rent = tile.rent * RENT_MULTIPLIERS_BY_HOUSES[tile.houses];
+            } else if (rec) {
+              rent = tile.rent * rec.multiplier;
             } else {
               rent = this.ownsFullSet(tile.owner, tile.group) ? tile.rent * 2 : tile.rent;
             }
             const owner = this.players[tile.owner];
+            let apocalypseNote = "";
+            if (this.apocalypseActive && this.apocalypseGroupMultipliers[tile.group]) {
+              const mult = this.apocalypseGroupMultipliers[tile.group].multiplier;
+              rent = Math.round(rent * mult);
+              apocalypseNote = ` — ☠️ chaos x${mult}`;
+            }
             rent = this._applyEventRentModifiers(rent);
             rent = this._applyDoubleRentPower(owner, rent);
+            rent = this._applyApocalypseCrisisShield(player, rent);
             this._payRentWithInsurance(player, owner, rent);
             player.stats.rentPaid += rent;
             owner.stats.rentReceived += rent;
             player.stats.biggestRentPaid = Math.max(player.stats.biggestRentPaid, rent);
-            const buildingNote = tile.houses === 5 ? " (hôtel)" : tile.houses > 0 ? ` (${tile.houses} maison(s))` : "";
-            this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}${buildingNote}).`);
+            const buildingNote =
+              tile.houses === 5
+                ? " (hôtel)"
+                : tile.houses > 0
+                ? ` (${tile.houses} maison(s))`
+                : rec
+                ? ` (🏢 Société Immobilière x${rec.multiplier})`
+                : "";
+            this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}${buildingNote}${apocalypseNote}).`);
           }
           break;
         }
@@ -737,7 +813,7 @@
             }
             const owner = this.players[tile.owner];
             const count = this.board.filter((t) => t.type === "utility" && t.owner === tile.owner && !t.mortgaged).length;
-            const multiplier = count === 1 ? 4 : 10;
+            const multiplier = count === 1 ? 4 : count === 2 ? 10 : 20;
             let rent = diceSum * multiplier;
             rent = this._applyEventRentModifiers(rent);
             rent = this._applyDoubleRentPower(owner, rent);
@@ -745,7 +821,7 @@
             player.stats.rentPaid += rent;
             owner.stats.rentReceived += rent;
             player.stats.biggestRentPaid = Math.max(player.stats.biggestRentPaid, rent);
-            this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}, ${count === 1 ? "x4" : "x10"} le lancer de dés).`);
+            this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}, x${multiplier} le lancer de dés).`);
           }
           break;
         }
@@ -754,7 +830,11 @@
             this.addLog(`🛡️ ${player.name} déclenche son immunité fiscale : ${tile.name} ne lui coûte rien !`);
             break;
           }
-          const amount = this.activeEvent && this.activeEvent.id === "inflation" ? Math.ceil(tile.amount * 1.25) : tile.amount;
+          // Montant tiré au sort parmi 4 valeurs fixes à chaque passage —
+          // plus de montant figé par case, pour un peu d'incertitude.
+          const TAX_AMOUNTS = [50, 75, 100, 150];
+          const baseAmount = TAX_AMOUNTS[Math.floor(Math.random() * TAX_AMOUNTS.length)];
+          const amount = this.activeEvent && this.activeEvent.id === "inflation" ? Math.ceil(baseAmount * 1.25) : baseAmount;
           this.pay(player, null, amount);
           player.stats.taxesPaid += amount;
           if (this.vacationPotEnabled) {
@@ -971,6 +1051,7 @@
       }
 
       this._tickWorldEvent();
+      this._tickApocalypse();
     }
 
     // ---- Événements mondiaux temporaires — Phase 8d ----
@@ -1049,6 +1130,15 @@
 
     _tickWorldEvent() {
       if (!this.activeEvent) return;
+      // La durée se compte en TOURS COMPLETS (chaque joueur encore actif
+      // a joué au moins une fois), pas en simples passages de joueur —
+      // sinon la durée réelle dépendrait du nombre de joueurs (un événement
+      // "6 tours" durerait 1,5 round à 4 joueurs contre 6 rounds en tête-à-tête).
+      const activeCount = this.players.filter((p) => !p.bankrupt).length;
+      this.activeEvent.turnsSinceRoundStart = (this.activeEvent.turnsSinceRoundStart || 0) + 1;
+      if (this.activeEvent.turnsSinceRoundStart < Math.max(1, activeCount)) return;
+      this.activeEvent.turnsSinceRoundStart = 0;
+
       this.activeEvent.turnsRemaining -= 1;
       if (this.activeEvent.turnsRemaining <= 0) {
         const ended = WORLD_EVENTS.find((e) => e.id === this.activeEvent.id);
@@ -1140,9 +1230,10 @@
     }
 
     _finishJailRoll(freed) {
+      const player = this.currentPlayer();
       this.checkVictory();
       if (!this.gameOver) this.checkTurnLimit();
-      if (!this.gameOver && !freed) {
+      if (!this.gameOver && (!freed || player.bankrupt)) {
         this.nextPlayer();
       }
     }
@@ -1428,6 +1519,329 @@
     }
 
     // ---- Enchères — Phase 7 (secrète) + Phase 8a (classique) ----
+    // ---- Mode APOCALYPSE ----
+    proposeApocalypse(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this.apocalypseAllowed) return { ok: false, reason: "Le mode Apocalypse n'est pas autorisé pour cette partie." };
+      if (this.apocalypseActive) return { ok: false, reason: "L'Apocalypse est déjà active." };
+      if (this.pendingApocalypseVote) return { ok: false, reason: "Un vote pour l'Apocalypse est déjà en cours." };
+      if (this.pendingAuctionVote) return { ok: false, reason: "Un vote pour l'enchère globale est déjà en cours." };
+      if (this.pendingAuction || this.pendingDecision) {
+        return { ok: false, reason: "Attends que l'action en cours soit résolue avant de proposer un vote." };
+      }
+
+      this.pendingApocalypseVote = { proposerId: playerId, votes: { [playerId]: true } };
+      this.addLog(`☠️ ${player.name} propose de déclencher l'APOCALYPSE — irréversible ! Les autres joueurs doivent voter.`);
+      this._checkApocalypseVoteOutcome();
+      return { ok: true };
+    }
+
+    voteOnApocalypse(playerId, accept) {
+      if (!this.pendingApocalypseVote) return { ok: false, reason: "Aucun vote en cours." };
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (this.pendingApocalypseVote.votes[playerId] !== undefined) return { ok: false, reason: "Tu as déjà voté." };
+
+      this.pendingApocalypseVote.votes[playerId] = !!accept;
+      this.addLog(`☠️ ${player.name} vote ${accept ? "POUR" : "CONTRE"} l'Apocalypse.`);
+      this._checkApocalypseVoteOutcome();
+      return { ok: true };
+    }
+
+    _checkApocalypseVoteOutcome() {
+      if (!this.pendingApocalypseVote) return;
+      const activeIds = this.activePlayers().map((p) => p.id);
+      const votes = this.pendingApocalypseVote.votes;
+      const yesCount = activeIds.filter((id) => votes[id] === true).length;
+      const noCount = activeIds.filter((id) => votes[id] === false).length;
+      const totalActive = activeIds.length;
+
+      if (yesCount > totalActive / 2) {
+        this.pendingApocalypseVote = null;
+        this._activateApocalypse();
+      } else if (noCount > totalActive / 2 || yesCount + noCount === totalActive) {
+        this.pendingApocalypseVote = null;
+        this.addLog(`☠️ Le vote pour l'Apocalypse est REFUSÉ.`);
+      }
+    }
+
+    _activateApocalypse() {
+      this.apocalypseActive = true;
+      this.apocalypseIntensity = 1;
+      this._apocalypseTurnsSinceRoundStart = 0;
+
+      const groups = [...new Set(this.board.filter((t) => t.type === "property").map((t) => t.group))];
+      groups.forEach((g) => {
+        this.apocalypseGroupMultipliers[g] = { multiplier: this._rollApocalypseMultiplier(1), turnsUntilReroll: 3 + Math.floor(Math.random() * 3) };
+      });
+
+      // Distribue à chaque joueur encore actif un pouvoir apocalyptique —
+      // en plus de son pouvoir normal éventuel, jamais à la place.
+      this.activePlayers().forEach((p) => {
+        const powerId = APOCALYPSE_POWERS[Math.floor(Math.random() * APOCALYPSE_POWERS.length)].id;
+        p.apocalypsePower = { id: powerId, used: false, armed: false };
+      });
+
+      this.addLog(`☠️☠️☠️ L'APOCALYPSE EST DÉCLENCHÉE ! Les loyers deviennent chaotiques et instables, et ne feront qu'empirer. Aucun retour en arrière possible. ☠️☠️☠️`);
+    }
+
+    // Multiplicateur aléatoire, plage élargie par l'intensité — reste
+    // centré autour de 1 en moyenne (donc pas de biais systématique vers
+    // la hausse ou la baisse), mais des écarts de plus en plus extrêmes.
+    _rollApocalypseMultiplier(intensity) {
+      const spread = 0.7 * intensity;
+      const raw = 1 + (Math.random() * 2 - 1) * spread;
+      return Math.max(0.15, Math.round(raw * 100) / 100);
+    }
+
+    // Appelé à chaque tour complet (voir _tickWorldEvent pour le même
+    // principe) une fois l'Apocalypse active : intensifie le chaos et
+    // ré-évalue une partie des multiplicateurs de groupe.
+    _tickApocalypse() {
+      if (!this.apocalypseActive) return;
+      const activeCount = this.players.filter((p) => !p.bankrupt).length;
+      this._apocalypseTurnsSinceRoundStart = (this._apocalypseTurnsSinceRoundStart || 0) + 1;
+      if (this._apocalypseTurnsSinceRoundStart < Math.max(1, activeCount)) return;
+      this._apocalypseTurnsSinceRoundStart = 0;
+
+      this.apocalypseIntensity = Math.min(6, this.apocalypseIntensity + 0.35);
+
+      Object.keys(this.apocalypseGroupMultipliers).forEach((g) => {
+        const entry = this.apocalypseGroupMultipliers[g];
+        entry.turnsUntilReroll -= 1;
+        if (entry.turnsUntilReroll <= 0) {
+          entry.multiplier = this._rollApocalypseMultiplier(this.apocalypseIntensity);
+          entry.turnsUntilReroll = 2 + Math.floor(Math.random() * 3);
+        }
+      });
+
+      // Occasionnellement, un événement de crise ponctuel (probabilité
+      // croissante avec l'intensité) vient s'ajouter au chaos ambiant.
+      const chanceOfCrisis = Math.min(0.6, 0.1 * this.apocalypseIntensity);
+      if (Math.random() < chanceOfCrisis) {
+        this._triggerApocalypseCrisisEvent();
+      }
+    }
+
+    _triggerApocalypseCrisisEvent() {
+      const groups = Object.keys(this.apocalypseGroupMultipliers);
+      const events = ["crash", "boom", "redistribution", "crisis_tax"];
+      const kind = events[Math.floor(Math.random() * events.length)];
+      if (kind === "crash" && groups.length > 0) {
+        const g = groups[Math.floor(Math.random() * groups.length)];
+        this.apocalypseGroupMultipliers[g] = { multiplier: 0.2, turnsUntilReroll: 2 };
+        this.addLog(`☠️ 📉 Krach immobilier soudain sur le groupe ${g} (multiplicateur x0.2 temporairement) !`);
+      } else if (kind === "boom" && groups.length > 0) {
+        const g = groups[Math.floor(Math.random() * groups.length)];
+        this.apocalypseGroupMultipliers[g] = { multiplier: 3 + this.apocalypseIntensity * 0.5, turnsUntilReroll: 2 };
+        this.addLog(`☠️ 📈 Boom spéculatif soudain sur le groupe ${g} (loyers explosifs temporairement) !`);
+      } else if (kind === "redistribution") {
+        const active = this.activePlayers();
+        if (active.length >= 2) {
+          const richest = active.reduce((a, b) => (b.money > a.money ? b : a));
+          const poorest = active.reduce((a, b) => (b.money < a.money ? b : a));
+          if (richest.id !== poorest.id) {
+            const amount = Math.floor(richest.money * 0.2);
+            this.pay(richest, poorest, amount);
+            this.addLog(`☠️ 💥 Redistribution brutale : ${richest.name} verse ${amount} à ${poorest.name} !`);
+          }
+        }
+      } else if (kind === "crisis_tax") {
+        const amount = Math.floor(50 * this.apocalypseIntensity);
+        this.activePlayers().forEach((p) => this.pay(p, null, amount));
+        this.addLog(`☠️ 🏦 Taxe de crise généralisée : chaque joueur encore en jeu paie ${amount} à la banque !`);
+      }
+    }
+
+
+    // ---- Pouvoirs APOCALYPTIQUES — bien plus puissants que la normale ----
+    armApocalypsePower(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Un pouvoir ne peut être activé qu'à ton propre tour." };
+      if (!player.apocalypsePower) return { ok: false, reason: "Tu n'as pas de pouvoir apocalyptique." };
+      if (player.apocalypsePower.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+      if (player.apocalypsePower.armed) return { ok: false, reason: "Ce pouvoir est déjà activé, en attente." };
+
+      const power = findApocalypsePower(player.apocalypsePower.id);
+      if (!power || power.mode !== "arm") return { ok: false, reason: "Ce pouvoir ne se déclenche pas de cette façon." };
+
+      player.apocalypsePower.armed = true;
+      this.addLog(`${power.icon} ${player.name} active son pouvoir apocalyptique "${power.name}" — en attente.`);
+      return { ok: true };
+    }
+
+    useApocalypseTargetedCrash(playerId, group) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!player.apocalypsePower || player.apocalypsePower.id !== "apoc_targeted_crash") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.apocalypsePower.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+      if (!this.apocalypseGroupMultipliers[group]) return { ok: false, reason: "Groupe invalide." };
+
+      player.apocalypsePower.used = true;
+      this.apocalypseGroupMultipliers[group] = { multiplier: 0.2, turnsUntilReroll: 3 };
+      this.addLog(`📉 ${player.name} déclenche un Krach ciblé sur le groupe ${group} (x0.2) !`);
+      return { ok: true };
+    }
+
+    useApocalypsePersonalBoom(playerId, group) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!player.apocalypsePower || player.apocalypsePower.id !== "apoc_personal_boom") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.apocalypsePower.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+      if (!this.apocalypseGroupMultipliers[group]) return { ok: false, reason: "Groupe invalide." };
+      if (!this.board.some((t) => t.type === "property" && t.group === group && t.owner === playerId)) {
+        return { ok: false, reason: "Tu ne possèdes rien dans ce groupe." };
+      }
+
+      player.apocalypsePower.used = true;
+      this.apocalypseGroupMultipliers[group] = { multiplier: 5, turnsUntilReroll: 3 };
+      this.addLog(`📈 ${player.name} déclenche un Boom personnel sur le groupe ${group} (x5) !`);
+      return { ok: true };
+    }
+
+    useApocalypseForcedRedistribution(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!player.apocalypsePower || player.apocalypsePower.id !== "apoc_forced_redistribution") {
+        return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      }
+      if (player.apocalypsePower.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+
+      const active = this.activePlayers();
+      const richest = active.reduce((a, b) => (b.money > a.money ? b : a));
+      const poorest = active.reduce((a, b) => (b.money < a.money ? b : a));
+      if (richest.id === poorest.id) return { ok: false, reason: "Tout le monde a la même richesse en liquide, rien à redistribuer." };
+
+      player.apocalypsePower.used = true;
+      const amount = Math.floor(richest.money * 0.3);
+      this.pay(richest, poorest, amount);
+      this.addLog(`💥 ${player.name} déclenche une Redistribution forcée : ${richest.name} verse ${amount} à ${poorest.name} !`);
+      return { ok: true };
+    }
+
+    useApocalypseTargetedTax(playerId, targetId) {
+      const player = this.players[playerId];
+      const target = this.players[targetId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!target || target.bankrupt || targetId === playerId) return { ok: false, reason: "Cible invalide." };
+      if (!player.apocalypsePower || player.apocalypsePower.id !== "apoc_targeted_tax") return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      if (player.apocalypsePower.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+
+      player.apocalypsePower.used = true;
+      this.pay(target, null, 300);
+      this.addLog(`🎯 ${player.name} déclenche une Taxe ciblée : ${target.name} paie 300 à la banque !`);
+      return { ok: true };
+    }
+
+    useApocalypseLiquidityCrisis(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce pouvoir ne peut être utilisé qu'à ton propre tour." };
+      if (!player.apocalypsePower || player.apocalypsePower.id !== "apoc_liquidity_crisis") {
+        return { ok: false, reason: "Tu n'as pas ce pouvoir." };
+      }
+      if (player.apocalypsePower.used) return { ok: false, reason: "Ce pouvoir a déjà été utilisé." };
+
+      player.apocalypsePower.used = true;
+      this.activePlayers().forEach((p) => {
+        if (p.id === playerId) return;
+        const amount = Math.floor(p.money * 0.15);
+        if (amount > 0) this.pay(p, null, amount);
+      });
+      this.addLog(`🏦 ${player.name} déclenche une Crise de liquidité : tous les autres joueurs perdent 15% de leur argent !`);
+      return { ok: true };
+    }
+
+    // N'a de sens que si la construction est bloquée par manque de
+    // propriétés vendues : évite qu'un joueur bloque indéfiniment la
+    // partie en refusant d'acheter les dernières cases libres.
+    proposeGlobalAuction(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (this.pendingAuctionVote) return { ok: false, reason: "Un vote est déjà en cours." };
+      if (this.pendingApocalypseVote) return { ok: false, reason: "Un vote pour l'Apocalypse est déjà en cours." };
+      if (this.pendingAuction || this.pendingDecision) {
+        return { ok: false, reason: "Attends que l'action en cours soit résolue avant de proposer un vote." };
+      }
+      const unsoldTiles = this.board
+        .map((t, i) => ({ t, i }))
+        .filter(({ t }) => ["property", "airport", "utility"].includes(t.type) && t.owner === null)
+        .map(({ i }) => i);
+      if (unsoldTiles.length === 0) {
+        return { ok: false, reason: "Il ne reste aucune propriété libre à mettre aux enchères." };
+      }
+
+      this.pendingAuctionVote = { proposerId: playerId, votes: { [playerId]: true }, unsoldTiles };
+      this.addLog(
+        `🗳️ ${player.name} propose de mettre aux enchères les ${unsoldTiles.length} propriété(s) encore libres. Les autres joueurs doivent voter.`
+      );
+      this._checkGlobalAuctionVoteOutcome();
+      return { ok: true };
+    }
+
+    voteOnGlobalAuction(playerId, accept) {
+      if (!this.pendingAuctionVote) return { ok: false, reason: "Aucun vote en cours." };
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (this.pendingAuctionVote.votes[playerId] !== undefined) return { ok: false, reason: "Tu as déjà voté." };
+
+      this.pendingAuctionVote.votes[playerId] = !!accept;
+      this.addLog(`🗳️ ${player.name} vote ${accept ? "POUR" : "CONTRE"} l'enchère globale.`);
+      this._checkGlobalAuctionVoteOutcome();
+      return { ok: true };
+    }
+
+    // Résout le vote dès que le résultat est mathématiquement acquis
+    // (majorité stricte d'un côté), ou dès que tout le monde a voté.
+    _checkGlobalAuctionVoteOutcome() {
+      if (!this.pendingAuctionVote) return;
+      const activeIds = this.activePlayers().map((p) => p.id);
+      const votes = this.pendingAuctionVote.votes;
+      const yesCount = activeIds.filter((id) => votes[id] === true).length;
+      const noCount = activeIds.filter((id) => votes[id] === false).length;
+      const totalActive = activeIds.length;
+
+      if (yesCount > totalActive / 2) {
+        this._resolveGlobalAuctionVote(true);
+      } else if (noCount > totalActive / 2) {
+        this._resolveGlobalAuctionVote(false);
+      } else if (yesCount + noCount === totalActive) {
+        this._resolveGlobalAuctionVote(yesCount > noCount);
+      }
+    }
+
+    _resolveGlobalAuctionVote(passed) {
+      const vote = this.pendingAuctionVote;
+      this.pendingAuctionVote = null;
+      if (!passed) {
+        this.addLog(`🗳️ Le vote pour l'enchère globale des propriétés restantes est REFUSÉ.`);
+        return;
+      }
+      this.addLog(`🗳️ Le vote est ACCEPTÉ ! Les propriétés encore libres vont être mises aux enchères, une par une.`);
+      this.propertyLiquidationQueue = [...vote.unsoldTiles];
+      this._startNextLiquidationAuction();
+    }
+
+    _startNextLiquidationAuction() {
+      if (!this.propertyLiquidationQueue) return;
+      // Ignore toute case qui aurait pu être vendue autrement entre-temps (sécurité).
+      while (this.propertyLiquidationQueue.length > 0) {
+        const nextTile = this.propertyLiquidationQueue.shift();
+        if (this.board[nextTile] && this.board[nextTile].owner === null) {
+          this.startAuction(nextTile, { triggeredByRoll: false });
+          return;
+        }
+      }
+      this.propertyLiquidationQueue = null;
+      this.addLog(`🏦 Toutes les propriétés restantes ont trouvé un propriétaire.`);
+    }
+
     startAuction(tileIndex, options = {}) {
       const triggeredByRoll = options.triggeredByRoll !== false;
       const tile = this.board[tileIndex];
@@ -1624,6 +2038,15 @@
       }
 
       this.pendingAuction = null;
+
+      // Si cette enchère faisait partie d'une liquidation globale votée,
+      // on enchaîne directement sur la case suivante plutôt que de
+      // reprendre le déroulement normal du tour.
+      if (this.propertyLiquidationQueue !== null) {
+        this._startNextLiquidationAuction();
+        return;
+      }
+
       if (triggeredByRoll) {
         const wasDouble = this._pendingDiceWasDouble;
         this._pendingDiceWasDouble = false;
@@ -1895,6 +2318,108 @@
       return { ok: true };
     }
 
+    // ---- Société Immobilière — mécanique de DERNIÈRE CHANCE ----
+    // Paliers d'investissement calibrés sur l'économie réelle du jeu :
+    // argent de départ 1500, loyers de base 2 à 55 selon les groupes.
+    // Rendement décroissant (chaque palier coûte proportionnellement plus
+    // cher que le précédent) ; le multiplicateur maximum (x8) reste
+    // nettement sous ce qu'un hôtel sur un groupe complet peut atteindre
+    // (jusqu'à x50) — ce n'est pas censé être meilleur qu'un groupe classique
+    // bien développé, seulement une vraie chance de rester dans la course.
+
+    // Vérifie que TOUTES les conditions de dernière chance sont réunies.
+    // Volontairement strict : ce n'est un recours que quand la voie
+    // classique est réellement épuisée, pour tout le monde.
+    canFormRealEstateCompany(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (player.realEstateCompany) return { ok: false, reason: "Tu as déjà une Société Immobilière active." };
+
+      const myProperties = this.board.filter((t) => t.type === "property" && t.owner === playerId);
+      if (myProperties.length < 3) {
+        return { ok: false, reason: "Il faut posséder au moins 3 propriétés pour que ça ait un intérêt stratégique." };
+      }
+
+      const myGroups = [...new Set(myProperties.map((t) => t.group))];
+      if (myGroups.some((g) => this.ownsFullSet(playerId, g))) {
+        return { ok: false, reason: "Tu possèdes déjà un groupe complet : la voie classique t'est encore ouverte." };
+      }
+
+      const others = this.activePlayers().filter((p) => p.id !== playerId);
+      if (others.length === 0) return { ok: false, reason: "Il faut au moins un autre joueur encore en jeu." };
+      const allOthersHaveFullGroup = others.every((p) => {
+        const theirGroups = [...new Set(this.board.filter((t) => t.type === "property" && t.owner === p.id).map((t) => t.group))];
+        return theirGroups.some((g) => this.ownsFullSet(p.id, g));
+      });
+      if (!allOthersHaveFullGroup) {
+        return {
+          ok: false,
+          reason: "Tant qu'un autre joueur n'a pas complété au moins un groupe, ce n'est pas encore une dernière chance.",
+        };
+      }
+
+      const unsoldTile = this.board.find((t) => ["property", "airport", "utility"].includes(t.type) && t.owner === null);
+      if (unsoldTile) {
+        return {
+          ok: false,
+          reason: "Il reste des propriétés libres sur le plateau : accessible seulement quand tout a été acheté.",
+        };
+      }
+
+      // Tout groupe complet doit être développé au maximum (hôtel partout)
+      // ou hypothéqué — sinon la voie classique n'est pas encore épuisée
+      // pour son propriétaire.
+      const allGroups = [...new Set(this.board.filter((t) => t.type === "property").map((t) => t.group))];
+      for (const g of allGroups) {
+        const tiles = this.board.filter((t) => t.type === "property" && t.group === g);
+        const owner = tiles[0].owner;
+        if (owner === null || !tiles.every((t) => t.owner === owner)) continue; // groupe pas complet, pas concerné
+        const fullyDeveloped = tiles.every((t) => t.mortgaged || t.houses === 5);
+        if (!fullyDeveloped) {
+          return {
+            ok: false,
+            reason: "Il reste des maisons/hôtels à construire sur un groupe complet : la voie classique n'est pas épuisée.",
+          };
+        }
+      }
+
+      return { ok: true };
+    }
+
+    formRealEstateCompany(playerId) {
+      const check = this.canFormRealEstateCompany(playerId);
+      if (!check.ok) return check;
+      const player = this.players[playerId];
+      player.realEstateCompany = { totalInvested: 0, multiplier: 1 };
+      this.addLog(`🏢 ${player.name} forme une Société Immobilière avec ses propriétés — dernière chance activée !`);
+      return { ok: true };
+    }
+
+    investInRealEstateCompany(playerId, amount) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!player.realEstateCompany) return { ok: false, reason: "Tu n'as pas de Société Immobilière active." };
+      const invest = Math.max(0, Math.floor(Number(amount) || 0));
+      if (invest <= 0) return { ok: false, reason: "Montant invalide." };
+      if (player.money < invest) return { ok: false, reason: "Pas assez d'argent pour cet investissement." };
+
+      this.pay(player, null, invest);
+      player.realEstateCompany.totalInvested += invest;
+
+      let newMultiplier = 1;
+      for (const tier of REAL_ESTATE_COMPANY_TIERS) {
+        if (player.realEstateCompany.totalInvested >= tier.invested) newMultiplier = tier.multiplier;
+      }
+      const increased = newMultiplier > player.realEstateCompany.multiplier;
+      player.realEstateCompany.multiplier = newMultiplier;
+      this.addLog(
+        `🏢 ${player.name} investit ${invest} dans sa Société Immobilière (total investi : ${player.realEstateCompany.totalInvested}, multiplicateur x${newMultiplier}${
+          increased ? " — palier franchi !" : ""
+        }).`
+      );
+      return { ok: true, multiplier: newMultiplier };
+    }
+
     buyInsurance(playerId, planId) {
       if (!this.insuranceEnabled) return { ok: false, reason: "L'assurance n'est pas activée pour cette partie." };
       const player = this.players[playerId];
@@ -1932,10 +2457,20 @@
         activeEvent: this.activeEvent ? { ...this.activeEvent } : null,
         loansEnabled: this.loansEnabled,
         insuranceEnabled: this.insuranceEnabled,
+        buildOnlyWhenSoldOut: this.buildOnlyWhenSoldOut,
+        pendingAuctionVote: this.pendingAuctionVote ? { ...this.pendingAuctionVote, votes: { ...this.pendingAuctionVote.votes } } : null,
+        apocalypseAllowed: this.apocalypseAllowed,
+        apocalypseActive: this.apocalypseActive,
+        apocalypseIntensity: this.apocalypseIntensity,
+        apocalypseGroupMultipliers: { ...this.apocalypseGroupMultipliers },
+        pendingApocalypseVote: this.pendingApocalypseVote
+          ? { ...this.pendingApocalypseVote, votes: { ...this.pendingApocalypseVote.votes } }
+          : null,
         powerRerollCost: this.powerRerollCost,
         insurancePrices: this.insurancePrices,
         forcedAuctionsPerGame: this.forcedAuctionsPerGame,
         rentMultipliersByHouses: RENT_MULTIPLIERS_BY_HOUSES,
+        realEstateCompanyTiers: REAL_ESTATE_COMPANY_TIERS,
         airportRentTable: [25, 50, 100, 200, 300, 450],
         chanceCardDescriptions: CHANCE_CARDS.map((c) => c.description),
         // Enchère secrète : on ne révèle jamais les montants avant la fin.
@@ -1969,6 +2504,8 @@
           inJail: p.inJail,
           jailTurns: p.jailTurns,
           jailFreeCards: p.jailFreeCards,
+          realEstateCompany: p.realEstateCompany ? { ...p.realEstateCompany } : null,
+          apocalypsePower: p.apocalypsePower ? { ...p.apocalypsePower } : null,
           bankrupt: p.bankrupt,
           power: p.power ? { ...p.power } : null,
           insurance: p.insurance ? { ...p.insurance } : null,
