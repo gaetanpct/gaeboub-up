@@ -343,7 +343,13 @@ function runNextAIAction(room) {
 
   const { player: aiPlayer, kind, complex } = situation;
   const playerId = room.socketToPlayerId[aiPlayer.socketId];
-  const thinkTime = AI.computeThinkTime({ complex }, aiPlayer.difficulty);
+  let thinkTime = AI.computeThinkTime({ complex }, aiPlayer.difficulty);
+  // Mode lent : l'IA joue à un rythme humain, bien plus lisible à l'œil
+  // qu'à la cadence normale — surtout utile pour observer une partie ou
+  // pour de nouveaux joueurs qui découvrent le jeu.
+  if (room.settings.slowMode) {
+    thinkTime = complex ? 3500 + Math.random() * 2000 : 2000 + Math.random() * 1200;
+  }
 
   setTimeout(() => {
     if (!room.started || !room.engine || room.engine.gameOver) return; // la partie a pu se terminer entre-temps

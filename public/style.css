@@ -829,6 +829,12 @@ button:disabled {
   z-index: 2;
 }
 
+/* Mode lent : déplacements des pions bien plus lisibles à l'œil, comme
+   un vrai joueur humain qui prend son temps. */
+body.slow-mode .token {
+  transition: left 1.3s ease, top 1.3s ease;
+}
+
 /* ============================================================
    Phase 5 : personnalisation + écran de jeu sur un seul écran (sans scroll)
    ============================================================ */

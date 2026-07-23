@@ -820,6 +820,7 @@ function wireRealEstateCompanyButtons() {
 
 function renderGame(state) {
   latestGameState = state;
+  document.body.classList.toggle("slow-mode", !!(latestGameSettings && latestGameSettings.slowMode));
   ReachUpBoardView.updateBoard(state, myPlayerId);
   renderPlayers(state);
   renderActionArea(state);

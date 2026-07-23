@@ -56,16 +56,20 @@
   // demande explicite : les loyers de base étant faibles sans maisons,
   // même x8 restait insuffisant). Calibré sur l'économie réelle (argent
   // de départ 1500, loyers de base 2 à 55) — modulaire et réajustable ici.
-  const REAL_ESTATE_COMPANY_TIERS = [
-    { invested: 0, multiplier: 3 },
-    { invested: 200, multiplier: 6 },
-    { invested: 500, multiplier: 9 },
-    { invested: 900, multiplier: 12 },
-    { invested: 1400, multiplier: 15 },
-    { invested: 2000, multiplier: 18 },
-    { invested: 2700, multiplier: 21 },
-    { invested: 3500, multiplier: 24 },
-  ];
+  // Aucun plafond réel : chaque palier suivant multiplie le loyer de +3,
+  // pour un coût toujours croissant (rendement décroissant), selon la
+  // même progression que les 8 premiers paliers d'origine (200, +300,
+  // +400, +500...). Générée par formule plutôt qu'une liste figée pour ne
+  // jamais imposer de maximum — 200 paliers représentent une somme totale
+  // totalement irréaliste à atteindre en jeu, donc "sans plafond" en pratique.
+  function generateRealEstateCompanyTiers(count) {
+    const tiers = [];
+    for (let n = 0; n <= count; n++) {
+      tiers.push({ invested: 50 * n * (n + 3), multiplier: 3 * (n + 1) });
+    }
+    return tiers;
+  }
+  const REAL_ESTATE_COMPANY_TIERS = generateRealEstateCompanyTiers(200);
 
   // ---- Mode APOCALYPSE ----
   // Irréversible, cumulatif avec tout le reste (événements, pouvoirs,

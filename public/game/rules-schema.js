@@ -323,6 +323,19 @@
         },
       ],
     },
+    {
+      category: "IA",
+      rules: [
+        {
+          id: "slowMode",
+          label: "🐢 Mode lent (l'IA joue à vitesse humaine)",
+          type: "boolean",
+          default: false,
+          info:
+            "Ralentit nettement les déplacements et les décisions de l'IA pour pouvoir suivre ce qu'il se passe à l'œil, comme un vrai joueur — utile en observant une partie ou pour les nouveaux joueurs.",
+        },
+      ],
+    },
   ];
 
   // Construit l'objet de réglages par défaut à partir du schéma
