@@ -1423,7 +1423,9 @@ function renderPropertyRow(tile, index) {
 
   let buildingLabel = "";
   if (tile.type === "property") {
-    buildingLabel = tile.houses === 5 ? "🏨 Hôtel" : tile.houses > 0 ? `🏠 x${tile.houses}` : "";
+    const owner = tile.owner !== null && tile.owner !== undefined ? latestGameState.players[tile.owner] : null;
+    const inRealEstateCompany = owner && owner.realEstateCompany && (tile.houses || 0) === 0 && !tile.mortgaged;
+    buildingLabel = tile.houses === 5 ? "🏨 Hôtel" : tile.houses > 0 ? `🏠 x${tile.houses}` : inRealEstateCompany ? "🏢 Société Immobilière" : "";
   }
 
   const buttons = [];

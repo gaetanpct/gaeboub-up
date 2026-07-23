@@ -412,10 +412,20 @@
     const tile = state.board[auction.tileIndex];
     const value = strategicValue(state, me.id, auction.tileIndex, profile) + denialValue(state, me.id, auction.tileIndex, profile);
     const reserve = safeReserve(state, profile);
-    const rawMax = Math.min(
+    let rawMax = Math.min(
       me.money - reserve,
       Math.floor(value * profile.auctionAggressiveness)
     );
+    // Liquidation en chaîne (plusieurs propriétés enchéries d'affilée) :
+    // répartit équitablement ce qui reste entre CETTE enchère et toutes
+    // celles encore à venir, pour ne pas partir all-in sur les premières
+    // et se retrouver sans rien pour les suivantes.
+    if (state.propertyLiquidationRemaining > 0) {
+      const totalAuctionsLeft = state.propertyLiquidationRemaining + 1;
+      const availableForAuctions = Math.max(0, me.money - reserve);
+      const fairShare = Math.floor(availableForAuctions / totalAuctionsLeft);
+      rawMax = Math.min(rawMax, fairShare);
+    }
     // Variation volontaire : sans elle, quiconque connaît l'argent de l'IA
     // et le prix de la case peut recalculer sa mise exacte et la battre
     // systématiquement d'un cheveu, même en enchère scellée.
@@ -610,43 +620,6 @@
     const needed = nextTier.invested - me.realEstateCompany.totalInvested;
     if (me.money - needed < reserve) return false; // pas encore de quoi franchir ce palier sans se mettre à risque
     const result = engine.investInRealEstateCompany(me.id, needed);
-    return !!(result && result.ok);
-  }
-
-  // Propose le vote d'enchère globale si la construction est bloquée par
-  // manque de propriétés vendues ET que ÇA ME BLOQUE MOI (je possède un
-  // groupe complet que je ne peux pas encore développer) — pas juste par
-  // principe.
-  function considerProposingGlobalAuction(engine, state, me, profile) {
-    if (!state.buildOnlyWhenSoldOut) return false;
-    if (state.pendingAuctionVote || state.pendingApocalypseVote) return false;
-    const unsoldCount = state.board.filter((t) => OWNABLE_TYPES.includes(t.type) && t.owner === null).length;
-    if (unsoldCount === 0) return false;
-
-    const myGroups = [...new Set(state.board.filter((t) => t.type === "property" && t.owner === me.id).map((t) => t.group))];
-    const blockedByThis = myGroups.some((g) => {
-      const tiles = tilesOfGroup(state, g);
-      return tiles.every((t) => t.owner === me.id) && tiles.some((t) => (t.houses || 0) < 5 && !t.mortgaged);
-    });
-    if (!blockedByThis) return false;
-
-    const result = engine.proposeGlobalAuction(me.id);
-    return !!(result && result.ok);
-  }
-
-  // Ne propose l'Apocalypse qu'en vrai dernier recours : clairement
-  // dernier au classement, partie bien entamée, et pas systématiquement
-  // (reste un choix risqué parmi d'autres, pas un réflexe).
-  function considerProposingApocalypse(engine, state, me, profile) {
-    if (!state.apocalypseAllowed || state.apocalypseActive || state.pendingApocalypseVote || state.pendingAuctionVote) return false;
-    const activePlayers = state.players.filter((p) => !p.bankrupt);
-    if (activePlayers.length < 2) return false;
-    const rank = myRank(state, me.id);
-    if (rank !== activePlayers.length) return false; // seulement si VRAIMENT dernier
-    if (state.turnNumber < 20) return false; // laisse le jeu normal se dérouler d'abord
-    if (!chance(0.15)) return false;
-
-    const result = engine.proposeApocalypse(me.id);
     return !!(result && result.ok);
   }
 
@@ -996,12 +969,10 @@
     if (considerApocalypsePowers(engine, state, me, profile)) {
       return { kind: "apocalypsePower", complex: true };
     }
-    if (considerProposingGlobalAuction(engine, state, me, profile)) {
-      return { kind: "proposeGlobalAuction", complex: false };
-    }
-    if (considerProposingApocalypse(engine, state, me, profile)) {
-      return { kind: "proposeApocalypse", complex: false };
-    }
+    // Ne propose JAMAIS l'Apocalypse ni l'enchère globale de sa propre
+    // initiative — décisions trop lourdes de conséquences pour être
+    // laissées à l'IA, elle se contente de voter (voir plus haut) et
+    // d'utiliser ses pouvoirs si l'Apocalypse est déjà déclenchée.
     if (considerBuilding(engine, state, me, profile)) {
       return { kind: "build", complex: true };
     }

@@ -607,6 +607,7 @@ io.on("connection", (socket) => {
     room.engine = new GameEngine(room.players.map((p) => p.name), {
       ...room.settings,
       customBoard: room.settings.boardMode === "random" ? room.previewBoard : undefined,
+      aiPlayerIds: room.players.map((p, i) => (p.isAI ? i : null)).filter((i) => i !== null),
     });
     room.players.forEach((p, index) => {
       room.socketToPlayerId[p.socketId] = index;

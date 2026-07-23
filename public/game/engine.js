@@ -140,6 +140,7 @@
       this.powersEnabled = !!options.powersEnabled;
       this.powerRerollCost = 150;
       this.buildOnlyWhenSoldOut = !!options.buildOnlyWhenSoldOut;
+      this.aiPlayerIds = new Set(options.aiPlayerIds || []);
       this.pendingAuctionVote = null; // { proposerId, votes: {playerId: true/false}, unsoldTiles: [...] }
       this.propertyLiquidationQueue = null; // [...tileIndices] en cours de liquidation après un vote accepté
 
@@ -286,7 +287,15 @@
 
     ownsFullSet(playerId, group) {
       const tilesOfGroup = this.board.filter((t) => t.type === "property" && t.group === group);
-      return tilesOfGroup.every((t) => t.owner === playerId);
+      // Une case devenue "indépendante" (extraite de son groupe d'origine
+      // par la Société Immobilière d'un autre joueur) compte comme un
+      // groupe complet à elle seule pour SON propriétaire, et ne compte
+      // plus du tout dans ce groupe pour les autres.
+      const myIndependentTile = tilesOfGroup.find((t) => t.independentGroup && t.owner === playerId);
+      if (myIndependentTile) return true;
+      const relevantTiles = tilesOfGroup.filter((t) => !t.independentGroup);
+      if (relevantTiles.length === 0) return false;
+      return relevantTiles.every((t) => t.owner === playerId);
     }
 
     // ---- Pouvoirs — Phase 8c ----
@@ -1562,8 +1571,9 @@
       const yesCount = activeIds.filter((id) => votes[id] === true).length;
       const noCount = activeIds.filter((id) => votes[id] === false).length;
       const totalActive = activeIds.length;
+      const humansOnBoard = this._allActiveHumansVotedYes(votes);
 
-      if (yesCount > totalActive / 2) {
+      if (yesCount > totalActive / 2 && humansOnBoard) {
         this.pendingApocalypseVote = null;
         this._activateApocalypse();
       } else if (noCount > totalActive / 2 || yesCount + noCount === totalActive) {
@@ -1805,6 +1815,17 @@
 
     // Résout le vote dès que le résultat est mathématiquement acquis
     // (majorité stricte d'un côté), ou dès que tout le monde a voté.
+    // Un vote (enchère globale ou Apocalypse) ne doit jamais pouvoir
+    // passer sur la seule base des votes de l'IA : si au moins un vrai
+    // joueur est encore en jeu, il doit avoir voté POUR pour que ça
+    // passe — quel que soit le nombre d'IA impliquées.
+    _allActiveHumansVotedYes(votes) {
+      const activeIds = this.activePlayers().map((p) => p.id);
+      const humanIds = activeIds.filter((id) => !this.aiPlayerIds.has(id));
+      if (humanIds.length === 0) return true; // aucun vrai joueur en jeu : pas de restriction
+      return humanIds.every((id) => votes[id] === true);
+    }
+
     _checkGlobalAuctionVoteOutcome() {
       if (!this.pendingAuctionVote) return;
       const activeIds = this.activePlayers().map((p) => p.id);
@@ -1812,13 +1833,14 @@
       const yesCount = activeIds.filter((id) => votes[id] === true).length;
       const noCount = activeIds.filter((id) => votes[id] === false).length;
       const totalActive = activeIds.length;
+      const humansOnBoard = this._allActiveHumansVotedYes(votes);
 
-      if (yesCount > totalActive / 2) {
+      if (yesCount > totalActive / 2 && humansOnBoard) {
         this._resolveGlobalAuctionVote(true);
       } else if (noCount > totalActive / 2) {
         this._resolveGlobalAuctionVote(false);
       } else if (yesCount + noCount === totalActive) {
-        this._resolveGlobalAuctionVote(yesCount > noCount);
+        this._resolveGlobalAuctionVote(yesCount > noCount && humansOnBoard);
       }
     }
 
@@ -2372,21 +2394,18 @@
         };
       }
 
-      // Tout groupe complet doit être développé au maximum (hôtel partout)
-      // ou hypothéqué — sinon la voie classique n'est pas encore épuisée
-      // pour son propriétaire.
-      const allGroups = [...new Set(this.board.filter((t) => t.type === "property").map((t) => t.group))];
-      for (const g of allGroups) {
-        const tiles = this.board.filter((t) => t.type === "property" && t.group === g);
-        const owner = tiles[0].owner;
-        if (owner === null || !tiles.every((t) => t.owner === owner)) continue; // groupe pas complet, pas concerné
-        const fullyDeveloped = tiles.every((t) => t.mortgaged || t.houses === 5);
-        if (!fullyDeveloped) {
-          return {
-            ok: false,
-            reason: "Il reste des maisons/hôtels à construire sur un groupe complet : la voie classique n'est pas épuisée.",
-          };
-        }
+      // Chaque AUTRE joueur doit avoir construit au moins une maison
+      // quelque part (peu importe où) — pas besoin que TOUT le plateau
+      // soit développé au maximum, sinon la dernière chance devient
+      // quasiment inaccessible en pratique.
+      const othersAllBuiltSomewhere = others.every((p) =>
+        this.board.some((t) => t.type === "property" && t.owner === p.id && (t.houses || 0) > 0)
+      );
+      if (!othersAllBuiltSomewhere) {
+        return {
+          ok: false,
+          reason: "Tant qu'un autre joueur n'a pas construit au moins une maison quelque part, la voie classique n'est pas épuisée.",
+        };
       }
 
       return { ok: true };
@@ -2397,6 +2416,26 @@
       if (!check.ok) return check;
       const player = this.players[playerId];
       player.realEstateCompany = { totalInvested: 0, multiplier: REAL_ESTATE_COMPANY_TIERS[0].multiplier };
+
+      // Les groupes où je possédais des cases sans les avoir toutes ne
+      // pourront plus jamais être complétés normalement (mes cases
+      // rejoignent la Société, pas le groupe classique) — les cases des
+      // AUTRES joueurs dans ces groupes deviennent donc indépendantes,
+      // pour ne pas les bloquer indéfiniment.
+      const myGroups = [...new Set(this.board.filter((t) => t.type === "property" && t.owner === playerId).map((t) => t.group))];
+      const freedTiles = [];
+      myGroups.forEach((g) => {
+        this.board.forEach((t) => {
+          if (t.type === "property" && t.group === g && t.owner !== null && t.owner !== playerId && !t.independentGroup) {
+            t.independentGroup = true;
+            freedTiles.push(t.name);
+          }
+        });
+      });
+      if (freedTiles.length > 0) {
+        this.addLog(`🔓 Devenues indépendantes (ne font plus partie d'un groupe à compléter) : ${freedTiles.join(", ")}.`);
+      }
+
       this.addLog(`🏢 ${player.name} forme une Société Immobilière avec ses propriétés — dernière chance activée !`);
       return { ok: true };
     }
@@ -2465,6 +2504,7 @@
         insuranceEnabled: this.insuranceEnabled,
         buildOnlyWhenSoldOut: this.buildOnlyWhenSoldOut,
         pendingAuctionVote: this.pendingAuctionVote ? { ...this.pendingAuctionVote, votes: { ...this.pendingAuctionVote.votes } } : null,
+        propertyLiquidationRemaining: this.propertyLiquidationQueue ? this.propertyLiquidationQueue.length : 0,
         apocalypseAllowed: this.apocalypseAllowed,
         apocalypseActive: this.apocalypseActive,
         apocalypseIntensity: this.apocalypseIntensity,
@@ -2529,6 +2569,7 @@
           owner: t.owner === undefined ? null : t.owner,
           houses: t.houses || 0,
           mortgaged: !!t.mortgaged,
+          independentGroup: !!t.independentGroup,
           houseCost: t.type === "property" ? HOUSE_COST_BY_GROUP[t.group] : null,
         })),
         log: this.log.slice(-80),

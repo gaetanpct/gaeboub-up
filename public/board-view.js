@@ -417,15 +417,20 @@
       }
 
       el.classList.toggle("board-tile--disabled-zone", disabledTiles.includes(index));
+      el.classList.toggle("board-tile--independent", !!tile.independentGroup);
 
       const buildingsSlot = buildingElements[index];
       if (buildingsSlot) {
+        const owner = tile.owner !== null && tile.owner !== undefined ? state.players[tile.owner] : null;
+        const inRealEstateCompany = owner && owner.realEstateCompany && tile.type === "property" && (tile.houses || 0) === 0 && !tile.mortgaged;
         if (tile.mortgaged) {
           buildingsSlot.innerHTML = "🔒";
         } else if (tile.houses === 5) {
           buildingsSlot.innerHTML = "🏨";
         } else if (tile.houses > 0) {
           buildingsSlot.innerHTML = "🏠".repeat(tile.houses);
+        } else if (inRealEstateCompany) {
+          buildingsSlot.innerHTML = "🏢";
         } else {
           buildingsSlot.innerHTML = "";
         }
