@@ -1439,8 +1439,13 @@ function renderPropertyRow(tile, index) {
       buttons.push(`<button data-action="sellHouse" data-tile="${index}">➖ Vendre une maison (+${Math.floor(tile.houseCost / 2)})</button>`);
     }
     if (tile.houses === 0) {
+      const me = latestGameState.players.find((p) => p.id === myPlayerId);
       const mortgageAmount = Math.floor(tile.price / 2);
-      buttons.push(`<button data-action="mortgage" data-tile="${index}">🏦 Hypothéquer (+${mortgageAmount})</button>`);
+      if (me && me.money < 0) {
+        buttons.push(`<button data-action="mortgage" data-tile="${index}">🏦 Hypothéquer (+${mortgageAmount})</button>`);
+      } else {
+        buttons.push(`<span class="properties-empty" style="font-size: 0.8rem;">🏦 Hypothéquer : seulement possible à découvert</span>`);
+      }
     }
   }
 

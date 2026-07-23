@@ -51,18 +51,20 @@
 
   // Société Immobilière — paliers d'investissement (montant CUMULÉ à
   // investir pour atteindre ce multiplicateur). Rendement décroissant :
-  // chaque palier suivant coûte proportionnellement plus cher pour +1 de
-  // multiplicateur. Calibré sur l'économie réelle (argent de départ 1500,
-  // loyers de base 2 à 55) — modulaire et facile à réajuster ici.
+  // chaque palier suivant coûte proportionnellement plus cher pour +1x de
+  // multiplicateur (le "+1" vaut maintenant +3 après triplement, sur
+  // demande explicite : les loyers de base étant faibles sans maisons,
+  // même x8 restait insuffisant). Calibré sur l'économie réelle (argent
+  // de départ 1500, loyers de base 2 à 55) — modulaire et réajustable ici.
   const REAL_ESTATE_COMPANY_TIERS = [
-    { invested: 0, multiplier: 1 },
-    { invested: 200, multiplier: 2 },
-    { invested: 500, multiplier: 3 },
-    { invested: 900, multiplier: 4 },
-    { invested: 1400, multiplier: 5 },
-    { invested: 2000, multiplier: 6 },
-    { invested: 2700, multiplier: 7 },
-    { invested: 3500, multiplier: 8 },
+    { invested: 0, multiplier: 3 },
+    { invested: 200, multiplier: 6 },
+    { invested: 500, multiplier: 9 },
+    { invested: 900, multiplier: 12 },
+    { invested: 1400, multiplier: 15 },
+    { invested: 2000, multiplier: 18 },
+    { invested: 2700, multiplier: 21 },
+    { invested: 3500, multiplier: 24 },
   ];
 
   // ---- Mode APOCALYPSE ----
@@ -672,11 +674,15 @@
     // ---- Hypothèque — Phase 6 ----
     canMortgage(playerId, tileIndex) {
       const tile = this.board[tileIndex];
+      const player = this.players[playerId];
       if (!tile) return { ok: false, reason: "Case invalide." };
       if (!["property", "airport", "utility"].includes(tile.type)) return { ok: false, reason: "Cette case ne peut pas être hypothéquée." };
       if (tile.owner !== playerId) return { ok: false, reason: "Tu ne possèdes pas cette propriété." };
       if (tile.mortgaged) return { ok: false, reason: "Déjà hypothéquée." };
       if (tile.type === "property" && tile.houses > 0) return { ok: false, reason: "Vends d'abord les maisons avant d'hypothéquer." };
+      if (!player || player.money >= 0) {
+        return { ok: false, reason: "Tu ne peux hypothéquer que lorsque tu es à découvert (argent négatif) — pas comme simple levier pour construire davantage." };
+      }
 
       const amount = Math.floor(tile.price / 2);
       return { ok: true, amount };
@@ -2390,7 +2396,7 @@
       const check = this.canFormRealEstateCompany(playerId);
       if (!check.ok) return check;
       const player = this.players[playerId];
-      player.realEstateCompany = { totalInvested: 0, multiplier: 1 };
+      player.realEstateCompany = { totalInvested: 0, multiplier: REAL_ESTATE_COMPANY_TIERS[0].multiplier };
       this.addLog(`🏢 ${player.name} forme une Société Immobilière avec ses propriétés — dernière chance activée !`);
       return { ok: true };
     }
