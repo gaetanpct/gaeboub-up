@@ -417,7 +417,7 @@
       }
 
       el.classList.toggle("board-tile--disabled-zone", disabledTiles.includes(index));
-      el.classList.toggle("board-tile--independent", !!tile.independentGroup);
+      el.classList.toggle("board-tile--independent", !!tile.groupKey);
 
       const buildingsSlot = buildingElements[index];
       if (buildingsSlot) {
@@ -469,6 +469,8 @@
 
       token.style.display = "";
       token.title = player.id === myPlayerId ? `${player.name} (toi)` : player.name;
+      const isAI = (state.aiPlayerIds || []).includes(player.id);
+      token.classList.toggle("token--ai", isAI);
 
       const center = tileCenterPercent(player.position, state.board.length);
       const offset = TOKEN_OFFSETS[player.id % TOKEN_OFFSETS.length];

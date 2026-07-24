@@ -1577,16 +1577,20 @@ function renderPowerModal() {
   `;
 
   if (!me.power.used) {
-    const cost = latestGameState.powerRerollCost || 150;
-    const canAfford = me.money >= cost;
-    html += `
-      <div class="trade-form">
-        <button id="btn-reroll-power" class="btn-text-link" type="button" ${canAfford ? "" : "disabled"}>
-          🔄 Changer de pouvoir (${cost})
-        </button>
-        ${canAfford ? "" : `<p class="properties-empty">Pas assez d'argent pour changer de pouvoir.</p>`}
-      </div>
-    `;
+    if (me.hasRerolledPower) {
+      html += `<p class="properties-empty">Tu as déjà changé de pouvoir une fois cette partie — ce n'est possible qu'une seule fois.</p>`;
+    } else {
+      const cost = latestGameState.powerRerollCost || 250;
+      const canAfford = me.money >= cost;
+      html += `
+        <div class="trade-form">
+          <button id="btn-reroll-power" class="btn-text-link" type="button" ${canAfford ? "" : "disabled"}>
+            🔄 Changer de pouvoir (${cost})
+          </button>
+          ${canAfford ? "" : `<p class="properties-empty">Pas assez d'argent pour changer de pouvoir.</p>`}
+        </div>
+      `;
+    }
   }
 
   if (me.power.used) {

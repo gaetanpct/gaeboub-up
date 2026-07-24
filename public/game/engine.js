@@ -44,7 +44,7 @@
   WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
   INSURANCE_PLANS
 ) {
-  const STARTING_MONEY = 1500;
+  const STARTING_MONEY = 2000;
   const SALARY = 200;
   const JAIL_FINE = 50;
   const MAX_JAIL_TURNS = 3;
@@ -132,9 +132,9 @@
       this.loansEnabled = !!options.loansEnabled;
       this.insuranceEnabled = !!options.insuranceEnabled;
       this.insurancePrices = [
-        options.insurancePlan1Price !== undefined ? options.insurancePlan1Price : 150,
-        options.insurancePlan2Price !== undefined ? options.insurancePlan2Price : 350,
-        options.insurancePlan3Price !== undefined ? options.insurancePlan3Price : 600,
+        options.insurancePlan1Price !== undefined ? options.insurancePlan1Price : 300,
+        options.insurancePlan2Price !== undefined ? options.insurancePlan2Price : 550,
+        options.insurancePlan3Price !== undefined ? options.insurancePlan3Price : 900,
       ];
       this.loans = []; // prêts actifs (acceptés) : { id, lenderId, borrowerId, principal, interestRate, totalOwed, turnsRemaining }
       this.loanOffers = []; // propositions de prêt en attente de réponse
@@ -142,10 +142,11 @@
 
       const startingMoney = options.startingMoney || STARTING_MONEY;
       this.powersEnabled = !!options.powersEnabled;
-      this.powerRerollCost = 150;
+      this.powerRerollCost = 250;
       this.buildOnlyWhenSoldOut = !!options.buildOnlyWhenSoldOut;
       this.aiPlayerIds = new Set(options.aiPlayerIds || []);
       this.pendingAuctionVote = null; // { proposerId, votes: {playerId: true/false}, unsoldTiles: [...] }
+      this._nextSplitGroupCounter = 0;
       this.propertyLiquidationQueue = null; // [...tileIndices] en cours de liquidation après un vote accepté
 
       this.apocalypseAllowed = !!options.apocalypseAllowed;
@@ -164,6 +165,7 @@
         jailFreeCards: 0,
         realEstateCompany: null, // { totalInvested, multiplier } — voir formRealEstateCompany
         apocalypsePower: null, // { id, used, armed } — distribué uniquement si l'Apocalypse se déclenche
+        hasRerolledPower: false,
         bankrupt: false,
         power: this.powersEnabled ? { id: randomPowerId(playerNames.length < 3 ? ["forced_swap"] : []), used: false, armed: false } : null,
         insurance: null, // { planId, planName, turnsRemaining, coveragePercent }
@@ -289,17 +291,19 @@
       this.addLog(`${player.name} est envoyé en prison.`);
     }
 
-    ownsFullSet(playerId, group) {
-      const tilesOfGroup = this.board.filter((t) => t.type === "property" && t.group === group);
-      // Une case devenue "indépendante" (extraite de son groupe d'origine
-      // par la Société Immobilière d'un autre joueur) compte comme un
-      // groupe complet à elle seule pour SON propriétaire, et ne compte
-      // plus du tout dans ce groupe pour les autres.
-      const myIndependentTile = tilesOfGroup.find((t) => t.independentGroup && t.owner === playerId);
-      if (myIndependentTile) return true;
-      const relevantTiles = tilesOfGroup.filter((t) => !t.independentGroup);
-      if (relevantTiles.length === 0) return false;
-      return relevantTiles.every((t) => t.owner === playerId);
+    // Clé de regroupement EFFECTIVE pour les besoins de monopole/construction
+    // — normalement identique à tile.group (la couleur), sauf si la case a
+    // été séparée dans un sous-groupe plus petit suite à l'extraction de
+    // certaines cases par la Société Immobilière d'un autre joueur.
+    effectiveGroupKey(tile) {
+      return tile.groupKey || tile.group;
+    }
+
+    ownsFullSet(playerId, groupKeyOrTile) {
+      const key = typeof groupKeyOrTile === "string" ? groupKeyOrTile : this.effectiveGroupKey(groupKeyOrTile);
+      const tilesOfGroup = this.board.filter((t) => t.type === "property" && this.effectiveGroupKey(t) === key);
+      if (tilesOfGroup.length === 0) return false;
+      return tilesOfGroup.every((t) => t.owner === playerId);
     }
 
     // ---- Pouvoirs — Phase 8c ----
@@ -614,7 +618,7 @@
       if (!tile || tile.type !== "property") return { ok: false, reason: "Cette case n'est pas constructible." };
       if (tile.owner !== playerId) return { ok: false, reason: "Tu ne possèdes pas cette propriété." };
       if (tile.mortgaged) return { ok: false, reason: "Cette propriété est hypothéquée." };
-      if (!this.ownsFullSet(playerId, tile.group)) return { ok: false, reason: "Il faut posséder tout le groupe pour construire." };
+      if (!this.ownsFullSet(playerId, tile)) return { ok: false, reason: "Il faut posséder tout le groupe pour construire." };
       if (this.buildOnlyWhenSoldOut) {
         const unsoldTile = this.board.find((t) => ["property", "airport", "utility"].includes(t.type) && t.owner === null);
         if (unsoldTile) {
@@ -623,7 +627,7 @@
       }
       if (tile.houses >= 5) return { ok: false, reason: "Cette propriété a déjà un hôtel." };
 
-      const groupTiles = this.board.filter((t) => t.type === "property" && t.group === tile.group);
+      const groupTiles = this.board.filter((t) => t.type === "property" && this.effectiveGroupKey(t) === this.effectiveGroupKey(tile));
       const minHouses = Math.min(...groupTiles.map((t) => t.houses));
       if (tile.houses !== minHouses) {
         return { ok: false, reason: "Construis d'abord sur les propriétés moins bien loties du groupe (règle Even Build)." };
@@ -768,7 +772,7 @@
             } else if (rec) {
               rent = tile.rent * rec.multiplier;
             } else {
-              rent = this.ownsFullSet(tile.owner, tile.group) ? tile.rent * 2 : tile.rent;
+              rent = this.ownsFullSet(tile.owner, tile) ? tile.rent * 2 : tile.rent;
             }
             const owner = this.players[tile.owner];
             let apocalypseNote = "";
@@ -2338,6 +2342,7 @@
       if (!this.powersEnabled) return { ok: false, reason: "Les pouvoirs ne sont pas activés pour cette partie." };
       if (!player.power) return { ok: false, reason: "Tu n'as pas de pouvoir à changer." };
       if (player.power.used) return { ok: false, reason: "Tu as déjà utilisé ton pouvoir : impossible d'en changer maintenant." };
+      if (player.hasRerolledPower) return { ok: false, reason: "Tu ne peux changer de pouvoir qu'une seule fois par partie." };
       if (player.money < this.powerRerollCost) return { ok: false, reason: `Il faut ${this.powerRerollCost} pour changer de pouvoir.` };
 
       const oldName = (POWERS.find((p) => p.id === player.power.id) || {}).name || player.power.id;
@@ -2345,8 +2350,9 @@
       const excludeIds = this.players.length < 3 ? ["forced_swap", player.power.id] : [player.power.id];
       const newId = randomPowerId(excludeIds);
       player.power = { id: newId, used: false, armed: false };
+      player.hasRerolledPower = true;
       const newName = (POWERS.find((p) => p.id === newId) || {}).name || newId;
-      this.addLog(`🔄 ${player.name} paie ${this.powerRerollCost} pour changer de pouvoir : ${oldName} → ${newName}.`);
+      this.addLog(`🔄 ${player.name} paie ${this.powerRerollCost} pour changer de pouvoir (une seule fois par partie) : ${oldName} → ${newName}.`);
       return { ok: true };
     }
 
@@ -2372,7 +2378,7 @@
         return { ok: false, reason: "Il faut posséder au moins 3 propriétés pour que ça ait un intérêt stratégique." };
       }
 
-      const myGroups = [...new Set(myProperties.map((t) => t.group))];
+      const myGroups = [...new Set(myProperties.map((t) => this.effectiveGroupKey(t)))];
       if (myGroups.some((g) => this.ownsFullSet(playerId, g))) {
         return { ok: false, reason: "Tu possèdes déjà un groupe complet : la voie classique t'est encore ouverte." };
       }
@@ -2380,7 +2386,7 @@
       const others = this.activePlayers().filter((p) => p.id !== playerId);
       if (others.length === 0) return { ok: false, reason: "Il faut au moins un autre joueur encore en jeu." };
       const allOthersHaveFullGroup = others.every((p) => {
-        const theirGroups = [...new Set(this.board.filter((t) => t.type === "property" && t.owner === p.id).map((t) => t.group))];
+        const theirGroups = [...new Set(this.board.filter((t) => t.type === "property" && t.owner === p.id).map((t) => this.effectiveGroupKey(t)))];
         return theirGroups.some((g) => this.ownsFullSet(p.id, g));
       });
       if (!allOthersHaveFullGroup) {
@@ -2422,22 +2428,30 @@
       player.realEstateCompany = { totalInvested: 0, multiplier: REAL_ESTATE_COMPANY_TIERS[0].multiplier };
 
       // Les groupes où je possédais des cases sans les avoir toutes ne
-      // pourront plus jamais être complétés normalement (mes cases
-      // rejoignent la Société, pas le groupe classique) — les cases des
-      // AUTRES joueurs dans ces groupes deviennent donc indépendantes,
-      // pour ne pas les bloquer indéfiniment.
-      const myGroups = [...new Set(this.board.filter((t) => t.type === "property" && t.owner === playerId).map((t) => t.group))];
+      // pourront plus jamais être complétés dans leur forme d'origine (mes
+      // cases rejoignent la Société, pas le groupe classique) — les cases
+      // RESTANTES (des autres joueurs, ou encore libres) forment donc un
+      // vrai sous-groupe à part entière, avec le même prix/loyer/coût de
+      // construction qu'avant (basés sur la couleur d'origine, inchangée),
+      // mais qui ne nécessite plus que CES cases-là pour être complet.
+      const myTiles = this.board.filter((t) => t.type === "property" && t.owner === playerId);
+      const myEffectiveGroups = [...new Set(myTiles.map((t) => this.effectiveGroupKey(t)))];
       const freedTiles = [];
-      myGroups.forEach((g) => {
-        this.board.forEach((t) => {
-          if (t.type === "property" && t.group === g && t.owner !== null && t.owner !== playerId && !t.independentGroup) {
-            t.independentGroup = true;
-            freedTiles.push(t.name);
-          }
+      myEffectiveGroups.forEach((gKey) => {
+        const remainingTiles = this.board.filter(
+          (t) => t.type === "property" && this.effectiveGroupKey(t) === gKey && t.owner !== playerId
+        );
+        if (remainingTiles.length === 0) return; // je possédais tout ce (sous-)groupe, rien à séparer
+        const newKey = `${gKey}__split${this._nextSplitGroupCounter++}`;
+        remainingTiles.forEach((t) => {
+          t.groupKey = newKey;
+          freedTiles.push(t.name);
         });
       });
       if (freedTiles.length > 0) {
-        this.addLog(`🔓 Devenues indépendantes (ne font plus partie d'un groupe à compléter) : ${freedTiles.join(", ")}.`);
+        this.addLog(
+          `🔓 Forment désormais un groupe à part entière (même prix qu'avant, plus besoin des cases parties en Société) : ${freedTiles.join(", ")}.`
+        );
       }
 
       this.addLog(`🏢 ${player.name} forme une Société Immobilière avec ses propriétés — dernière chance activée !`);
@@ -2510,6 +2524,7 @@
         pendingAuctionVote: this.pendingAuctionVote ? { ...this.pendingAuctionVote, votes: { ...this.pendingAuctionVote.votes } } : null,
         propertyLiquidationRemaining: this.propertyLiquidationQueue ? this.propertyLiquidationQueue.length : 0,
         apocalypseAllowed: this.apocalypseAllowed,
+        aiPlayerIds: [...this.aiPlayerIds],
         apocalypseActive: this.apocalypseActive,
         apocalypseIntensity: this.apocalypseIntensity,
         apocalypseGroupMultipliers: { ...this.apocalypseGroupMultipliers },
@@ -2556,6 +2571,7 @@
           jailFreeCards: p.jailFreeCards,
           realEstateCompany: p.realEstateCompany ? { ...p.realEstateCompany } : null,
           apocalypsePower: p.apocalypsePower ? { ...p.apocalypsePower } : null,
+          hasRerolledPower: !!p.hasRerolledPower,
           bankrupt: p.bankrupt,
           power: p.power ? { ...p.power } : null,
           insurance: p.insurance ? { ...p.insurance } : null,
@@ -2573,7 +2589,7 @@
           owner: t.owner === undefined ? null : t.owner,
           houses: t.houses || 0,
           mortgaged: !!t.mortgaged,
-          independentGroup: !!t.independentGroup,
+          groupKey: t.groupKey || null,
           houseCost: t.type === "property" ? HOUSE_COST_BY_GROUP[t.group] : null,
         })),
         log: this.log.slice(-80),
