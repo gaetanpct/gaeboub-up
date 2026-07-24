@@ -997,6 +997,26 @@
         return { kind: "proposeLoan", complex: true };
       }
     }
+
+    // Gestion explicite de la prison : la carte n'est plus utilisée
+    // automatiquement par le moteur, donc l'IA doit décider elle-même —
+    // toujours l'utiliser tout de suite (gratuite, aucune raison
+    // stratégique de la garder), sinon payer si elle peut se le permettre
+    // après 3 tentatives ratées, sinon retenter sa chance aux dés.
+    if (me.inJail) {
+      if (me.jailFreeCards > 0) {
+        engine.useJailFreeCard(me.id);
+        return { kind: "useJailFreeCard", complex: false };
+      }
+      if (me.jailTurns >= 3) {
+        const reserve = safeReserve(state, profile);
+        if (me.money - 50 >= reserve) {
+          engine.payJailFine(me.id);
+          return { kind: "payJailFine", complex: false };
+        }
+      }
+    }
+
     engine.roll();
     return { kind: "roll", complex: false };
   }

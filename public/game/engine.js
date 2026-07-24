@@ -147,6 +147,11 @@
       this.aiPlayerIds = new Set(options.aiPlayerIds || []);
       this.pendingAuctionVote = null; // { proposerId, votes: {playerId: true/false}, unsoldTiles: [...] }
       this._nextSplitGroupCounter = 0;
+
+      // ---- Statistiques générales du plateau (toutes parties confondues) ----
+      this.tileLandingCounts = new Array(this.board.length).fill(0);
+      this.tileRentGenerated = new Array(this.board.length).fill(0);
+      this.biggestAuctionWin = null; // { amount, tileIndex, playerId }
       this.propertyLiquidationQueue = null; // [...tileIndices] en cours de liquidation après un vote accepté
 
       this.apocalypseAllowed = !!options.apocalypseAllowed;
@@ -258,6 +263,7 @@
       const passedGo = collectSalaryIfPassed && index <= player.position && !(player.position === 0);
       const landedExactlyOnGo = passedGo && index === 0;
       player.position = index;
+      this.tileLandingCounts[index] = (this.tileLandingCounts[index] || 0) + 1;
       if (passedGo) {
         const doubled = this.activeEvent && this.activeEvent.id === "double_salary";
         let salaryAmount = doubled ? this.salary * 2 : this.salary;
@@ -285,6 +291,7 @@
       // La case Prison est toujours au premier quart du plateau (comme sur
       // le plateau fixe), quelle que soit la taille réelle de celui-ci.
       player.position = this.board.length / 4;
+      this.tileLandingCounts[player.position] = (this.tileLandingCounts[player.position] || 0) + 1;
       player.inJail = true;
       player.jailTurns = 0;
       player.stats.timesInJail += 1;
@@ -788,6 +795,7 @@
             player.stats.rentPaid += rent;
             owner.stats.rentReceived += rent;
             player.stats.biggestRentPaid = Math.max(player.stats.biggestRentPaid, rent);
+            this.tileRentGenerated[this.board.indexOf(tile)] = (this.tileRentGenerated[this.board.indexOf(tile)] || 0) + rent;
             const buildingNote =
               tile.houses === 5
                 ? " (hôtel)"
@@ -820,6 +828,7 @@
             player.stats.rentPaid += rent;
             owner.stats.rentReceived += rent;
             player.stats.biggestRentPaid = Math.max(player.stats.biggestRentPaid, rent);
+            this.tileRentGenerated[this.board.indexOf(tile)] = (this.tileRentGenerated[this.board.indexOf(tile)] || 0) + rent;
             this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}).`);
           }
           break;
@@ -844,6 +853,7 @@
             player.stats.rentPaid += rent;
             owner.stats.rentReceived += rent;
             player.stats.biggestRentPaid = Math.max(player.stats.biggestRentPaid, rent);
+            this.tileRentGenerated[this.board.indexOf(tile)] = (this.tileRentGenerated[this.board.indexOf(tile)] || 0) + rent;
             this.addLog(`${player.name} paie ${rent} de loyer à ${owner.name} (${tile.name}, x${multiplier} le lancer de dés).`);
           }
           break;
@@ -1177,16 +1187,12 @@
       }
     }
 
-    // Tentative de sortie de prison (carte, double, ou 3e tour = amende).
-    // Renvoie true si le joueur est maintenant libre de jouer ce tour,
-    // false si son tour s'arrête ici (toujours en prison).
+    // Tentative de sortie de prison par les dés uniquement (double, ou
+    // constat qu'il faudra payer après 3 tentatives ratées). La carte
+    // "sortie de prison gratuite" n'est PLUS utilisée automatiquement ici
+    // — le joueur doit l'utiliser explicitement via useJailFreeCard(), un
+    // vrai choix plutôt qu'un réflexe imposé.
     _attemptJailExit(player) {
-      if (player.jailFreeCards > 0) {
-        player.jailFreeCards -= 1;
-        player.inJail = false;
-        this.addLog(`${player.name} utilise une carte "sortie de prison gratuite".`);
-        return { freed: true, moveWithRoll: null };
-      }
       const [d1, d2] = this.rollDice();
       this.lastRoll = { playerId: player.id, d1, d2, isDouble: d1 === d2, inJailRoll: true };
       this.addLog(`${player.name} lance les dés en prison : ${d1} et ${d2}.`);
@@ -1197,13 +1203,28 @@
       }
       player.jailTurns += 1;
       if (player.jailTurns >= MAX_JAIL_TURNS) {
-        this.pay(player, null, JAIL_FINE);
-        player.inJail = false;
-        this.addLog(`${player.name} paie l'amende de ${JAIL_FINE} (3e tentative) et sort de prison.`);
-        return { freed: true, moveWithRoll: null };
+        this.addLog(`${player.name} a épuisé ses tentatives : il doit maintenant payer ${JAIL_FINE} (ou utiliser une carte) pour sortir.`);
+        return { freed: false, moveWithRoll: null };
       }
       this.addLog(`${player.name} reste en prison.`);
       return { freed: false, moveWithRoll: null };
+    }
+
+    // Utilise explicitement une carte "sortie de prison gratuite" — sur
+    // clic d'un bouton dédié, jamais automatiquement.
+    useJailFreeCard(playerId) {
+      const player = this.players[playerId];
+      if (!player || player.bankrupt) return { ok: false, reason: "Joueur invalide." };
+      if (!this._isMyTurn(playerId)) return { ok: false, reason: "Ce n'est possible qu'à ton tour." };
+      if (!player.inJail) return { ok: false, reason: "Tu n'es pas en prison." };
+      if (player.jailFreeCards <= 0) return { ok: false, reason: "Tu n'as pas de carte 'sortie de prison gratuite'." };
+
+      player.jailFreeCards -= 1;
+      player.inJail = false;
+      this.addLog(`${player.name} utilise une carte "sortie de prison gratuite".`);
+      this.checkVictory();
+      if (!this.gameOver) this.checkTurnLimit();
+      return { ok: true };
     }
 
     // Bouton "Payer et sortir" : à tout moment durant son tour en prison
@@ -1425,6 +1446,7 @@
     _landOnTile(player, newIndex, options = {}) {
       const triggeredByRoll = options.triggeredByRoll !== false;
       player.position = newIndex;
+      this.tileLandingCounts[newIndex] = (this.tileLandingCounts[newIndex] || 0) + 1;
       const tile = this.board[newIndex];
       if (!options.skipMoveLog) {
         this.addLog(`${player.name} est déplacé sur "${tile.name}".`);
@@ -2068,6 +2090,9 @@
         this.pay(winner, null, winningBid);
         tile.owner = winner.id;
         winner.stats.auctionsWon += 1;
+        if (!this.biggestAuctionWin || winningBid > this.biggestAuctionWin.amount) {
+          this.biggestAuctionWin = { amount: winningBid, tileIndex: this.pendingAuction.tileIndex, playerId: winnerId };
+        }
         this.addLog(`🔨 ${winner.name} remporte l'enchère sur ${tile.name} pour ${winningBid} !`);
       } else {
         this.addLog(`Personne n'a remporté l'enchère : ${tile.name} reste libre.`);
@@ -2525,6 +2550,9 @@
         propertyLiquidationRemaining: this.propertyLiquidationQueue ? this.propertyLiquidationQueue.length : 0,
         apocalypseAllowed: this.apocalypseAllowed,
         aiPlayerIds: [...this.aiPlayerIds],
+        tileLandingCounts: [...this.tileLandingCounts],
+        tileRentGenerated: [...this.tileRentGenerated],
+        biggestAuctionWin: this.biggestAuctionWin ? { ...this.biggestAuctionWin } : null,
         apocalypseActive: this.apocalypseActive,
         apocalypseIntensity: this.apocalypseIntensity,
         apocalypseGroupMultipliers: { ...this.apocalypseGroupMultipliers },

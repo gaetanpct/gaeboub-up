@@ -1276,13 +1276,17 @@ function renderActionArea(state) {
     const me = state.players.find((p) => p.id === myPlayerId);
     if (me && me.inJail) {
       const canAfford = me.money >= 50;
+      const hasCard = me.jailFreeCards > 0;
       box.innerHTML = `
-        <p>🔒 Tu es en prison. Paie 50 pour sortir tout de suite, ou tente ta chance : un double te libère et te déplace directement du nombre de cases obtenu.</p>
+        <p>🔒 Tu es en prison. ${hasCard ? "Utilise ta carte, " : ""}paie 50 pour sortir tout de suite, ou tente ta chance : un double te libère et te déplace directement du nombre de cases obtenu.</p>
+        ${hasCard ? `<button id="btn-use-jail-card" class="btn-primary">🎫 Utiliser ma carte "Sortie de prison gratuite" (${me.jailFreeCards})</button>` : ""}
         <button id="btn-pay-jail" class="btn-primary" ${canAfford ? "" : "disabled"}>💰 Payer 50 et sortir</button>
         <button id="btn-roll" class="btn-secondary">🎲 Lancer les dés (tenter un double)</button>
         ${canAfford ? "" : '<p class="properties-empty">Pas assez d\'argent pour payer l\'amende.</p>'}
       `;
       actionArea.appendChild(box);
+      const cardBtn = document.getElementById("btn-use-jail-card");
+      if (cardBtn) cardBtn.addEventListener("click", () => socket.emit("game:useJailFreeCard"));
       const payBtn = document.getElementById("btn-pay-jail");
       if (canAfford) payBtn.addEventListener("click", () => socket.emit("game:payJailFine"));
       document.getElementById("btn-roll").addEventListener("click", () => socket.emit("game:roll"));
@@ -1914,7 +1918,52 @@ function renderStatsModal() {
     })
     .join("");
 
-  content.innerHTML = header + cards;
+  content.innerHTML = header + cards + renderBoardStatsSection(state);
+}
+
+// Statistiques générales du PLATEAU (toutes parties confondues, pas par
+// joueur) — pensées pour être amusantes à découvrir en fin de partie.
+function renderBoardStatsSection(state) {
+  const ownableTiles = state.board
+    .map((t, i) => ({ tile: t, index: i }))
+    .filter(({ tile }) => ["property", "airport", "utility"].includes(tile.type));
+
+  const mostVisited = state.board
+    .map((t, i) => ({ tile: t, index: i, count: state.tileLandingCounts[i] || 0 }))
+    .sort((a, b) => b.count - a.count)[0];
+
+  const mostProfitableTile = ownableTiles
+    .map(({ tile, index }) => ({ tile, index, rent: state.tileRentGenerated[index] || 0 }))
+    .sort((a, b) => b.rent - a.rent)[0];
+
+  const rentByGroup = {};
+  ownableTiles.forEach(({ tile, index }) => {
+    if (tile.type !== "property") return;
+    rentByGroup[tile.group] = (rentByGroup[tile.group] || 0) + (state.tileRentGenerated[index] || 0);
+  });
+  const mostProfitableGroupEntry = Object.entries(rentByGroup).sort((a, b) => b[1] - a[1])[0];
+
+  const totalBankruptcies = state.players.filter((p) => p.bankrupt).length;
+  const totalRentGenerated = state.tileRentGenerated.reduce((sum, v) => sum + (v || 0), 0);
+
+  const biggestAuctionHtml = state.biggestAuctionWin
+    ? `<span>🔨 Plus grosse mise gagnée : <strong>${state.biggestAuctionWin.amount}</strong> (${state.board[state.biggestAuctionWin.tileIndex].name} par ${state.players[state.biggestAuctionWin.playerId].name})</span>`
+    : `<span>🔨 Plus grosse mise gagnée : <strong>aucune enchère cette partie</strong></span>`;
+
+  return `
+    <h3 class="trade-section-title">🎲 Statistiques du plateau</h3>
+    <div class="property-row stats-card">
+      <div class="stats-grid">
+        <span>📍 Case la plus visitée : <strong>${mostVisited.tile.name}</strong> (${mostVisited.count} fois)</span>
+        <span>💰 Case la plus rentable : <strong>${mostProfitableTile ? mostProfitableTile.tile.name : "—"}</strong> (${mostProfitableTile ? mostProfitableTile.rent : 0} de loyer généré)</span>
+        <span>🏘️ Groupe le plus rentable : <strong>${mostProfitableGroupEntry ? mostProfitableGroupEntry[0] : "—"}</strong> (${mostProfitableGroupEntry ? mostProfitableGroupEntry[1] : 0} de loyer généré)</span>
+        ${biggestAuctionHtml}
+        <span>💸 Loyer total généré sur toute la partie : <strong>${totalRentGenerated}</strong></span>
+        <span>⏱️ Tours joués : <strong>${state.turnNumber}</strong></span>
+        <span>💀 Faillites : <strong>${totalBankruptcies}</strong></span>
+      </div>
+    </div>
+  `;
 }
 
 function renderLoansModal() {

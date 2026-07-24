@@ -666,6 +666,20 @@ io.on("connection", (socket) => {
     broadcastGame(room);
   });
 
+  socket.on("game:useJailFreeCard", () => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+
+    const result = room.engine.useJailFreeCard(myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
   socket.on("game:buyDecision", ({ buy } = {}) => {
     const room = getRoom(socket);
     if (!room || !room.started || !room.engine) return;
