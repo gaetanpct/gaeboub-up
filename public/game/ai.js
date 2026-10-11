@@ -128,11 +128,12 @@
   function netWorthOf(state, playerId) {
     const player = state.players.find((p) => p.id === playerId);
     if (!player) return 0;
+    if (typeof player.netWorth === "number") return player.netWorth; // valeur calculée par le moteur
     const propsValue = state.board
       .filter((t) => t.owner === playerId)
       .reduce((sum, t) => {
         const base = t.mortgaged ? Math.floor((t.price || 0) / 2) : t.price || 0;
-        const houseValue = t.type === "property" && t.houses ? t.houses * Math.floor((t.price || 0) * 0.4) : 0;
+        const houseValue = t.type === "property" && t.houses ? t.houses * (t.houseCost || Math.floor((t.price || 0) * 0.4)) : 0;
         return sum + base + houseValue;
       }, 0);
     return player.money + propsValue;

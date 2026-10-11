@@ -548,8 +548,7 @@ socket.on("game:started", ({ state, socketToPlayerId, settings }) => {
   if (state.gameOver) clearSession();
 });
 
-socket.on("game:update", ({ state, settings }) => {
-  if (settings) latestGameSettings = settings;
+function applyGameUpdate(state) {
   processNewLogLines(state);
   renderGame(state);
   if (chatOpen) refreshChatRecipients();
@@ -557,6 +556,47 @@ socket.on("game:update", ({ state, settings }) => {
   // d'être : sans ça, "Retour au menu" (qui recharge la page) ramènerait
   // automatiquement vers cette même partie terminée.
   if (state.gameOver) clearSession();
+}
+
+// Mode lent : quand un pion avance, on le laisse parcourir les cases une à une
+// AVANT d'afficher la suite (achat, loyer, journal...), pour que tout le monde
+// puisse suivre. Les mises à jour qui arrivent pendant ce temps sont mises en
+// attente, seule la plus récente est conservée.
+let walkHoldActive = false;
+let queuedWalkState = null;
+
+function handleGameUpdate(state) {
+  const slow = !!(latestGameSettings && latestGameSettings.slowMode);
+  if (!slow) {
+    applyGameUpdate(state);
+    return;
+  }
+  if (walkHoldActive) {
+    queuedWalkState = state;
+    return;
+  }
+  const waitMs = ReachUpBoardView.startTokenWalks(latestGameState, state);
+  if (waitMs <= 0) {
+    applyGameUpdate(state);
+    return;
+  }
+  walkHoldActive = true;
+  // Les dés s'affichent tout de suite, le reste attend l'arrivée du pion.
+  ReachUpBoardView.updateBoard(state, myPlayerId);
+  setTimeout(() => {
+    walkHoldActive = false;
+    applyGameUpdate(state);
+    if (queuedWalkState) {
+      const next = queuedWalkState;
+      queuedWalkState = null;
+      handleGameUpdate(next);
+    }
+  }, waitMs + 150);
+}
+
+socket.on("game:update", ({ state, settings }) => {
+  if (settings) latestGameSettings = settings;
+  handleGameUpdate(state);
 });
 
 // Ne connaît aucune règle du jeu : lit juste les nouvelles lignes du
@@ -708,13 +748,9 @@ function renderSummaryModal() {
   if (!latestGameState) return;
   const state = latestGameState;
 
+  // La valeur totale est calculée par le moteur (argent + propriétés + maisons + prêts), une seule source de vérité.
   const ranking = [...state.players]
-    .map((p) => {
-      const propsValue = state.board
-        .filter((t) => t.owner === p.id)
-        .reduce((sum, t) => sum + (t.mortgaged ? Math.floor((t.price || 0) / 2) : t.price || 0), 0);
-      return { ...p, netWorth: p.money + propsValue };
-    })
+    .map((p) => ({ ...p, netWorth: p.netWorth }))
     .sort((a, b) => b.netWorth - a.netWorth);
 
   const rankingHtml = ranking
@@ -1311,7 +1347,7 @@ function renderActionArea(state) {
       const canAfford = me.money >= 50;
       const hasCard = me.jailFreeCards > 0;
       box.innerHTML = `
-        <p>🔒 Tu es en prison. ${hasCard ? "Utilise ta carte, " : ""}paie 50 pour sortir tout de suite, ou tente ta chance : un double te libère et te déplace directement du nombre de cases obtenu.</p>
+        <p>🔒 Tu es en prison. ${hasCard ? "Utilise ta carte, " : ""}paie 50 pour sortir tout de suite, ou tente ta chance : un double te libère et te déplace directement du nombre de cases obtenu. Après 3 tentatives ratées, tu sors gratuitement.</p>
         ${hasCard ? `<button id="btn-use-jail-card" class="btn-primary">🎫 Utiliser ma carte "Sortie de prison gratuite" (${me.jailFreeCards})</button>` : ""}
         <button id="btn-pay-jail" class="btn-primary" ${canAfford ? "" : "disabled"}>💰 Payer 50 et sortir</button>
         <button id="btn-roll" class="btn-secondary">🎲 Lancer les dés (tenter un double)</button>
@@ -1872,25 +1908,44 @@ function renderTileDetailModal(tileIndex) {
     const defs = latestGameState.familyDefs || {};
     const famId = tile.family || tile.type;
     const def = defs[famId];
+    const icon = def ? def.icon : "";
     if (famId === "utility") {
       content.innerHTML = `
         <p>Prix d'achat : <strong>${tile.price}</strong></p>
         ${ownerLine()}
-        <p>Loyer = lancer de dés × <strong>4</strong> si tu possèdes cette seule compagnie, × <strong>10</strong> si tu possèdes les deux.</p>
+        <p>Loyer = lancer de dés × <strong>4</strong> avec 1 compagnie, × <strong>10</strong> avec 2, × <strong>15</strong> avec 3.</p>
       `;
-    } else if (famId === "mall") {
+    } else if (famId === "toll") {
       content.innerHTML = `
-        <p>${def.icon} Prix d'achat : <strong>${tile.price}</strong></p>
+        <p>${icon} Prix d'achat : <strong>${tile.price}</strong></p>
         ${ownerLine()}
-        <p>Loyer = <strong>12 + 5 par propriété que possède le visiteur</strong> (maximum 120), multiplié par ×1,6 si tu possèdes 2 centres, ×2,2 pour 3, ×2,8 pour 4.</p>
+        <p>Tout joueur qui <strong>passe devant</strong> ce péage (ou s'y arrête) le paie à son propriétaire. Péage actuel : <strong>${latestGameState.currentToll ?? "—"}</strong>. Le montant suit la valeur du plateau (achats et constructions), avec un plafond de 15 % d'un salaire.</p>
+      `;
+    } else if (famId === "centralbank") {
+      content.innerHTML = `
+        <p>${icon} Prix d'achat : <strong>${tile.price}</strong></p>
+        ${ownerLine()}
+        <p>Son propriétaire touche <strong>15 %</strong> de chaque salaire que les autres joueurs perçoivent en passant par Départ. Aucun loyer en s'y arrêtant.</p>
+      `;
+    } else if (famId === "adagency") {
+      content.innerHTML = `
+        <p>${icon} Prix d'achat : <strong>${tile.price}</strong></p>
+        ${ownerLine()}
+        <p>Aucun loyer en s'y arrêtant. Son propriétaire touche <strong>+10 %</strong> sur tous ses loyers, et <strong>+20 %</strong> s'il possède les deux régies.</p>
+      `;
+    } else if (famId === "garden") {
+      content.innerHTML = `
+        <p>${icon} Prix d'achat : <strong>${tile.price}</strong></p>
+        ${ownerLine()}
+        <p>Aucun loyer en s'y arrêtant. Son propriétaire prélève <strong>10 %</strong> des loyers touchés sur les deux cases rentables les plus proches (une de chaque côté). Les cartes Destin, taxes, cases mystère et coins sont ignorés.</p>
       `;
     } else {
       const table = (def && def.table) || latestGameState.airportRentTable;
       const rows = table
-        .map((rent, i) => `<tr><td>${i + 1} ${def ? def.label.toLowerCase() : "aéroport"}(s) possédé(s)</td><td>${rent}${famId === "stadium" ? " (x2 pendant un événement)" : ""}</td></tr>`)
+        .map((rent, i) => `<tr><td>${i + 1} ${def ? def.label.toLowerCase() : "aéroport"}(s) possédé(s)</td><td>${rent}</td></tr>`)
         .join("");
       content.innerHTML = `
-        <p>${def ? def.icon : ""} Prix d'achat : <strong>${tile.price}</strong></p>
+        <p>${icon} Prix d'achat : <strong>${tile.price}</strong></p>
         ${ownerLine()}
         <table class="tile-detail-table">
           <thead><tr><th>Situation</th><th>Loyer</th></tr></thead>
@@ -1954,12 +2009,11 @@ function renderStatsModal() {
   const content = document.getElementById("stats-content");
   const state = latestGameState;
 
-  const withNetWorth = state.players.map((p) => {
-    const propsValue = state.board
-      .filter((t) => t.owner === p.id)
-      .reduce((sum, t) => sum + (t.mortgaged ? Math.floor((t.price || 0) / 2) : t.price || 0), 0);
-    return { ...p, netWorth: p.money + propsValue, propertiesCount: state.board.filter((t) => t.owner === p.id).length };
-  });
+  const withNetWorth = state.players.map((p) => ({
+    ...p,
+    netWorth: p.netWorth,
+    propertiesCount: state.board.filter((t) => t.owner === p.id).length,
+  }));
   withNetWorth.sort((a, b) => b.netWorth - a.netWorth);
 
   const header = state.gameOver

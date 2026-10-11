@@ -22,13 +22,15 @@
     const { INSURANCE_PLANS } = require("./insurance-plans.js");
     const CONTRACTS = require("./contracts.js");
     const FAMILY_LIB = require("./families.js");
+    const STREET_NAMES = require("./street-names.js");
     module.exports = factory(
       BOARD, CHANCE_CARDS, HOUSE_COST_BY_GROUP, RENT_MULTIPLIERS_BY_HOUSES,
       POWERS, STEAL_AMOUNT, STEAL_MIN_TARGET_MONEY, DOUBLE_RENT_CAP, DISCOUNT_PURCHASE_PERCENT, BANK_LOAN_AMOUNT, RENT_COLLECTOR_DURATION_TURNS, HOUSE_WRECKER_COUNT, randomPowerId, APOCALYPSE_POWERS, findApocalypsePower,
       WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
       INSURANCE_PLANS,
       CONTRACTS,
-      FAMILY_LIB
+      FAMILY_LIB,
+      STREET_NAMES
     );
   } else {
     const b = root.ReachUpBoard;
@@ -41,7 +43,8 @@
       w.WORLD_EVENTS, w.EVENT_DURATION_TURNS, w.FREQUENCY_PROBABILITY, w.randomEvent,
       ins.INSURANCE_PLANS,
       root.ReachUpContracts,
-      root.ReachUpFamilies
+      root.ReachUpFamilies,
+      root.ReachUpStreetNames
     );
   }
 })(typeof window !== "undefined" ? window : globalThis, function (
@@ -50,7 +53,8 @@
   WORLD_EVENTS, EVENT_DURATION_TURNS, FREQUENCY_PROBABILITY, randomEvent,
   INSURANCE_PLANS,
   CONTRACTS,
-  FAMILY_LIB
+  FAMILY_LIB,
+  STREET_NAMES
 ) {
   const STARTING_MONEY = 2000;
   const SALARY = 200;
@@ -136,6 +140,9 @@
       // différence entre les deux, un plateau est juste "un tableau de cases".
       const sourceBoard = options.customBoard || BOARD_TEMPLATE;
       this.board = sourceBoard.map((tile) => ({ ...tile }));
+      // Plateau fixe : les noms maison sont posés au hasard à chaque partie.
+      // (Un plateau généré les a déjà reçus du générateur, aperçu compris.)
+      if (!options.customBoard && STREET_NAMES) STREET_NAMES.applyStreetNames(this.board);
 
       // Cases mystère : chacune reçoit, pour CETTE partie, un des 5 effets
       // possibles (casino, bureau des impôts, loterie, banque, hôpital). On
@@ -302,7 +309,74 @@
       if (to) to.money += amount;
     }
 
+    // Péages : tout déplacement vers l'avant fait payer chaque case Péage
+    // franchie (y compris celle où l'on s'arrête).
+    _payTollsAlongPath(player, fromIndex, toIndex) {
+      const n = this.board.length;
+      let steps = (toIndex - fromIndex + n) % n;
+      if (steps === 0) steps = n;
+      let tollAmount = null;
+      for (let s = 1; s <= steps; s++) {
+        const idx = (fromIndex + s) % n;
+        const tile = this.board[idx];
+        if (tile.family !== "toll" || tile.owner === null || tile.owner === undefined || tile.owner === player.id || tile.mortgaged) continue;
+        const owner = this.players[tile.owner];
+        if (!owner || owner.bankrupt) continue;
+        if (tollAmount === null) tollAmount = this._currentToll();
+        this.pay(player, owner, tollAmount);
+        player.stats.rentPaid += tollAmount;
+        owner.stats.rentReceived += tollAmount;
+        this.tileRentGenerated[idx] = (this.tileRentGenerated[idx] || 0) + tollAmount;
+        this.addLog(`🛣️ ${player.name} paie ${tollAmount} de péage à ${owner.name} (${tile.name}).`);
+      }
+    }
+
+    _currentToll() {
+      const value = FAMILY_LIB.boardValue(this.board, (t) => this._houseCostOf(t));
+      return FAMILY_LIB.tollAmount(value, this.salary);
+    }
+
+    // Banque centrale : 15 % des salaires des autres joueurs vont à son propriétaire.
+    _applyCentralBankCut(recipient, salaryAmount) {
+      const idx = this.board.findIndex((t) => t.family === "centralbank" && t.owner !== null && t.owner !== undefined && !t.mortgaged);
+      if (idx < 0) return;
+      const owner = this.players[this.board[idx].owner];
+      if (!owner || owner.bankrupt || owner.id === recipient.id) return;
+      const cut = Math.floor(salaryAmount * FAMILY_LIB.BANK_SALARY_SHARE);
+      if (cut <= 0) return;
+      this.pay(recipient, owner, cut);
+      owner.stats.rentReceived += cut;
+      this.tileRentGenerated[idx] = (this.tileRentGenerated[idx] || 0) + cut;
+      this.addLog(`🏛️ La Banque centrale prélève ${cut} sur le salaire de ${recipient.name} au profit de ${owner.name}.`);
+    }
+
+    // Régie publicitaire : +10 % (1 régie) ou +20 % (2 régies) sur les loyers touchés.
+    _adBonusFor(owner) {
+      const count = this.board.filter((t) => t.family === "adagency" && t.owner === owner.id && !t.mortgaged).length;
+      return FAMILY_LIB.adBonus(count);
+    }
+
+    // Jardin public : prélève 10 % de ce que touche le propriétaire d'une case voisine rentable.
+    _applyGardenSkim(tile, beneficiary, amountReceived) {
+      if (!beneficiary || amountReceived <= 0) return;
+      const tileIndex = this.board.indexOf(tile);
+      this.board.forEach((g, gi) => {
+        if (g.family !== "garden" || g.owner === null || g.owner === undefined || g.mortgaged) return;
+        if (g.owner === beneficiary.id) return;
+        const gardener = this.players[g.owner];
+        if (!gardener || gardener.bankrupt) return;
+        if (!FAMILY_LIB.gardenNeighbours(this.board, gi).includes(tileIndex)) return;
+        const skim = Math.floor(amountReceived * FAMILY_LIB.GARDEN_SHARE);
+        if (skim <= 0) return;
+        this.pay(beneficiary, gardener, skim);
+        gardener.stats.rentReceived += skim;
+        this.tileRentGenerated[gi] = (this.tileRentGenerated[gi] || 0) + skim;
+        this.addLog(`🌳 ${g.name} prélève ${skim} (10 %) sur le loyer touché par ${beneficiary.name} sur ${tile.name}.`);
+      });
+    }
+
     moveTo(player, index, collectSalaryIfPassed) {
+      if (collectSalaryIfPassed) this._payTollsAlongPath(player, player.position, index);
       const passedGo = collectSalaryIfPassed && index <= player.position && !(player.position === 0);
       const landedExactlyOnGo = passedGo && index === 0;
       player.position = index;
@@ -323,6 +397,7 @@
         this.addLog(
           `${player.name} ${landedExactlyOnGo ? "atterrit sur" : "passe par"} la case Départ et touche ${salaryAmount}${doubled ? " (salaire doublé !)" : ""}${landedNote}.`
         );
+        this._applyCentralBankCut(salaryRecipient, salaryAmount);
         if (player.bankDebt > 0 && !cession) {
           const repay = Math.min(player.bankDebt, salaryAmount);
           this.pay(player, null, repay);
@@ -395,6 +470,8 @@
     // Applique (et consomme) le pouvoir "loyer doublé" du propriétaire s'il
     // en a un disponible. Renvoie le loyer éventuellement doublé.
     _applyDoubleRentPower(owner, rent) {
+      const adBonus = this._adBonusFor(owner);
+      if (adBonus > 0 && rent > 0) rent = Math.round(rent * (1 + adBonus));
       if (owner.power && owner.power.id === "double_rent" && owner.power.armed && !owner.power.used) {
         owner.power.used = true;
         owner.power.armed = false;
@@ -552,6 +629,7 @@
         this.addLog(`🛡️ ${p2p.insurer.name} rembourse ${p2p.amount} de ce loyer à la place de ${payer.name} (contrat d'assurance entre joueurs).`);
       }
       this.pay(payer, recipient, payerShare);
+      if (recipient) this._applyGardenSkim(tile, recipient, payerShare);
       if (redirectToVacation) this._creditVacationPot(rent, owner);
       this._applyLoanIncomeRepayment(recipient, rent);
       return rent;
@@ -1027,6 +1105,9 @@
           break;
         }
         case "utility": {
+          // Péage, banque centrale, régie, jardin : aucun loyer quand on s'arrête dessus
+          // (leur effet se produit ailleurs : en passant, au salaire, sur les loyers...).
+          if (tile.family && FAMILY_LIB.FAMILIES[tile.family] && FAMILY_LIB.FAMILIES[tile.family].rentless) break;
           if (tile.owner !== player.id) {
             if (tile.mortgaged) {
               this.addLog(`${player.name} ne paie rien : ${tile.name} est hypothéquée.`);
@@ -1039,7 +1120,7 @@
             const owner = this.players[tile.owner];
             const isExtraFamily = !!tile.family && tile.family !== "utility";
             const count = this.board.filter((t) => t.type === "utility" && (t.family || "utility") === (tile.family || "utility") && t.owner === tile.owner && !t.mortgaged).length;
-            const multiplier = count === 1 ? 4 : count === 2 ? 10 : 20;
+            const multiplier = count === 1 ? 4 : count === 2 ? 10 : 15;
             let rent = isExtraFamily
               ? FAMILY_LIB.familyRent(this.board, tile, { visitorId: player.id, eventActive: !!this.activeEvent })
               : diceSum * multiplier;
@@ -1268,6 +1349,15 @@
           value += tile.houses * this._houseCostOf(tile);
         }
       });
+      // Prêts entre joueurs : ce qui reste à rembourser compte pour le prêteur
+      // (créance) et vient en déduction de l'emprunteur (dette).
+      (this.loans || []).forEach((l) => {
+        const total = l.totalOwed || l.principal || 0;
+        const outstanding = total > 0 ? Math.max(0, Math.round((l.principal || 0) * (1 - Math.min(1, (l.repaid || 0) / total)))) : 0;
+        if (l.lenderId === player.id) value += outstanding;
+        if (l.borrowerId === player.id) value -= outstanding;
+      });
+      if (player.bankDebt > 0) value -= player.bankDebt;
       return value;
     }
 
@@ -1560,11 +1650,10 @@
       }
       player.jailTurns += 1;
       if (player.jailTurns >= MAX_JAIL_TURNS) {
-        // Troisième échec : sortie obligatoire, l'amende est payée d'office
-        // (si le joueur n'a pas les moyens, il passe à découvert et le
-        // mécanisme de dette habituel prend le relais).
-        this.addLog(`${player.name} a épuisé ses tentatives : il paie l'amende de ${JAIL_FINE} et sort de prison.`);
-        this.pay(player, null, JAIL_FINE);
+        // Troisième échec : sortie automatique et GRATUITE (la prison ne doit
+        // pas être un abri, mais on ne met pas non plus un joueur sans le sou
+        // à découvert de force).
+        this.addLog(`${player.name} a épuisé ses tentatives : il sort de prison sans rien payer.`);
         player.inJail = false;
         player.jailTurns = 0;
         return { freed: true, moveWithRoll: null };
@@ -3353,6 +3442,7 @@
         realEstateCompanyTiers: REAL_ESTATE_COMPANY_TIERS,
         airportRentTable: [25, 50, 100, 200, 300, 450],
         familyDefs: FAMILY_LIB.publicDefs(),
+        currentToll: this.board.some((t) => t.family === "toll") ? this._currentToll() : null,
         lotteryPot: this.board.some((t) => t.type === "mystery") ? this.lotteryPot : null,
         chanceCardDescriptions: CHANCE_CARDS.map((c) => c.description),
         // Enchère secrète : on ne révèle jamais les montants avant la fin.
@@ -3397,6 +3487,7 @@
           inDebt: p.inDebt,
           skipTurns: p.skipTurns || 0,
           bankDebt: p.bankDebt || 0,
+          netWorth: this._computeNetWorth(p),
           stats: { ...p.stats },
         })),
         board: this.board.map((t) => ({

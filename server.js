@@ -97,12 +97,11 @@ const BOARD_SHAPE_KEYS = [
   "boardAirports",
   "boardUtilities",
   "boardMystery",
-  "boardPorts",
-  "boardMetros",
-  "boardStadiums",
-  "boardParks",
   "boardUniversities",
-  "boardMalls",
+  "boardTolls",
+  "boardCentralBank",
+  "boardAdAgencies",
+  "boardGardens",
 ];
 
 function regenerateBoard(room) {
@@ -116,12 +115,11 @@ function regenerateBoard(room) {
     numUtilities: room.settings.boardUtilities,
     numMystery: room.settings.boardMystery,
     families: {
-      port: room.settings.boardPorts,
-      metro: room.settings.boardMetros,
-      stadium: room.settings.boardStadiums,
-      park: room.settings.boardParks,
       university: room.settings.boardUniversities,
-      mall: room.settings.boardMalls,
+      toll: room.settings.boardTolls,
+      centralbank: room.settings.boardCentralBank,
+      adagency: room.settings.boardAdAgencies,
+      garden: room.settings.boardGardens,
     },
   });
 }
@@ -642,9 +640,16 @@ io.on("connection", (socket) => {
     room.chatHistory = [];
     room.chatSeq = 0;
     room.chatLastSent = {};
+    const customBoard = room.settings.boardMode === "random" ? room.previewBoard : undefined;
     room.engine = new GameEngine(room.players.map((p) => p.name), {
       ...room.settings,
-      customBoard: room.settings.boardMode === "random" ? room.previewBoard : undefined,
+      customBoard,
+      // Les événements mondiaux sont actifs dès qu'une case Spéciale est posée sur le plateau.
+      worldEventsEnabled: !!(customBoard && customBoard.some((t) => t.type === "special")),
+      // Options retirées de l'interface : valeurs fixes.
+      insuranceEnabled: false,
+      tradeTaxPercent: 0,
+      diceSides: 6,
       aiPlayerIds: room.players.map((p, i) => (p.isAI ? i : null)).filter((i) => i !== null),
     });
     room.players.forEach((p, index) => {

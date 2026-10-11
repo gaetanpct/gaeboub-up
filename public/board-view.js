@@ -31,6 +31,7 @@
     violet: "#a05ce0",
     rose: "#e05c9d",
     gris: "#9aa0ab",
+    noir: "#3b3b4a",
   };
 
   // Décalages (en % de la largeur/hauteur du plateau) pour que jusqu'à
@@ -175,7 +176,7 @@
       case "mystery": return tile.mysteryKind ? ({ casino: "🎰", tax_office: "🧾", lottery: "🎟️", bank: "🏦", hospital: "🏥" })[tile.mysteryKind] : "🎁";
       case "airport":
       case "utility": {
-        const defs = { port: "⚓", metro: "🚇", stadium: "🏟️", park: "🎢", university: "🎓", mall: "🛍️" };
+        const defs = { university: "🎓", toll: "🛣️", centralbank: "🏛️", adagency: "📺", garden: "🌳" };
         if (tile.family && defs[tile.family]) return defs[tile.family];
         return tile.type === "airport" ? "✈️" : tile.name.includes("Eau") ? "💧" : "⚡";
       }
@@ -234,6 +235,8 @@
   let tokenElements = {};
   let lastRenderedRollKey = null;
   let lastRenderedJailEventKey = null;
+  const walkingTokens = {}; // joueurs dont le pion avance actuellement case par case (mode lent)
+  const TILE_STEP_MS = 330; // durée d'un pas, en mode lent
   let onTileClickCallback = null;
   let currentAspectRatio = 1;
 
@@ -481,6 +484,8 @@
         tokenElements[player.id] = token;
       }
 
+      if (walkingTokens[player.id]) return; // le pion avance case par case : on ne le téléporte pas
+
       token.style.display = "";
       token.title = player.id === myPlayerId ? `${player.name} (toi)` : player.name;
       const isAI = (state.aiPlayerIds || []).includes(player.id);
@@ -550,6 +555,39 @@
     }
   }
 
+  // Mode lent : fait avancer les pions CASE PAR CASE entre l'ancien état et le
+  // nouveau, comme si on les poussait à la main. Renvoie la durée totale (ms)
+  // pendant laquelle l'interface doit attendre avant d'afficher la suite.
+  // Les téléportations (cartes, prison, longs trajets) restent directes.
+  function startTokenWalks(prevState, newState) {
+    if (!prevState || !newState || !boardEl || prevState.board.length !== newState.board.length) return 0;
+    const n = newState.board.length;
+    const jailEvent = newState.lastJailEvent;
+    const jailKey = jailEvent ? `${jailEvent.playerId}-${jailEvent.seq}` : null;
+    const newJail = !!jailKey && jailKey !== lastRenderedJailEventKey;
+    let longest = 0;
+    newState.players.forEach((player) => {
+      const before = prevState.players.find((p) => p.id === player.id);
+      const token = tokenElements[player.id];
+      if (!before || !token || player.bankrupt || before.position === player.position) return;
+      if (newJail && jailEvent.playerId === player.id) return;
+      const steps = (player.position - before.position + n) % n;
+      if (steps < 1 || steps > 14) return;
+      const offset = TOKEN_OFFSETS[player.id % TOKEN_OFFSETS.length];
+      walkingTokens[player.id] = true;
+      for (let i = 1; i <= steps; i++) {
+        const c = tileCenterPercent((before.position + i) % n, n);
+        setTimeout(() => {
+          token.style.left = `calc(${c.xPct}% + ${offset.dx}%)`;
+          token.style.top = `calc(${c.yPct}% + ${offset.dy}%)`;
+        }, i * TILE_STEP_MS);
+      }
+      setTimeout(() => { walkingTokens[player.id] = false; }, steps * TILE_STEP_MS + 60);
+      longest = Math.max(longest, steps * TILE_STEP_MS + 60);
+    });
+    return longest;
+  }
+
   function onTileClick(callback) {
     onTileClickCallback = callback;
   }
@@ -564,5 +602,5 @@
     return `<span class="tile-swatch tile-swatch--icon">${tileIcon(tile)}</span>`;
   }
 
-  window.ReachUpBoardView = { initBoard, updateBoard, renderPreview, onTileClick, tileSwatch, resizeBoardToFit, GROUP_COLORS, PLAYER_COLORS };
+  window.ReachUpBoardView = { initBoard, updateBoard, startTokenWalks, renderPreview, onTileClick, tileSwatch, resizeBoardToFit, GROUP_COLORS, PLAYER_COLORS };
 })();

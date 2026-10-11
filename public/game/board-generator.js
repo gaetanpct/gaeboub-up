@@ -20,11 +20,11 @@
 
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = factory(require("./families.js"));
+    module.exports = factory(require("./families.js"), require("./street-names.js"));
   } else {
-    root.ReachUpBoardGenerator = factory(root.ReachUpFamilies);
+    root.ReachUpBoardGenerator = factory(root.ReachUpFamilies, root.ReachUpStreetNames);
   }
-})(typeof window !== "undefined" ? window : globalThis, function (Families) {
+})(typeof window !== "undefined" ? window : globalThis, function (Families, StreetNames) {
 
   // Ordre des couleurs du moins cher au plus cher (identique à board.js).
   // Chaque groupe généré utilise un prix/loyer représentatif de son rang —
@@ -43,6 +43,7 @@
     { group: "violet", price: 410, rent: 45 },
     { group: "rose", price: 445, rent: 50 },
     { group: "gris", price: 480, rent: 55 },
+    { group: "noir", price: 520, rent: 60 },
   ];
 
   // Réserves de noms par groupe (on recycle les noms du plateau fixe).
@@ -60,6 +61,7 @@
     violet: ["Rue Améthyste", "Rue Lavande", "Rue Glycine", "Rue Iris"],
     rose: ["Avenue Magnolia", "Avenue Camélia", "Avenue Pivoine", "Avenue Fuchsia"],
     gris: ["Boulevard Argenté", "Boulevard Platine", "Boulevard Perle", "Boulevard Opale"],
+    noir: ["Avenue Onyx", "Avenue Ébène", "Avenue Jais", "Avenue Obsidienne"],
   };
 
   const SHORT_NAME_OVERRIDES = {
@@ -74,6 +76,7 @@
     "Rue Améthyste": "Améthyste", "Rue Lavande": "Lavande", "Rue Glycine": "Glycine", "Rue Iris": "Iris",
     "Avenue Magnolia": "Magnolia", "Avenue Camélia": "Camélia", "Avenue Pivoine": "Pivoine", "Avenue Fuchsia": "Fuchsia",
     "Boulevard Argenté": "Argenté", "Boulevard Platine": "Platine", "Boulevard Perle": "Perle", "Boulevard Opale": "Opale",
+    "Avenue Onyx": "Onyx", "Avenue Ébène": "Ébène", "Avenue Jais": "Jais", "Avenue Obsidienne": "Obsidienne",
   };
 
   const COMPASS = ["Nord", "Est", "Sud", "Ouest"];
@@ -90,12 +93,14 @@
   function buildTiers(numGroups) {
     if (numGroups <= 8) return GROUP_TIERS.slice(0, numGroups).map((t) => ({ ...t }));
     const roundTo = (n, step) => Math.round(n / step) * step;
+    // Le bleu marine reste toujours le dernier (le plus cher) groupe du plateau.
+    const colours = GROUP_TIERS.map((t) => t.group).filter((g) => g !== "bleu").slice(0, numGroups - 1).concat("bleu");
     return Array.from({ length: numGroups }, (_, i) => {
       const t = i / (numGroups - 1);
       const price = roundTo(60 + (375 - 60) * t, 5);
       const rent = Math.max(3, Math.round(price * (0.05 + 0.058 * t)));
       const houseCost = Math.max(50, roundTo(price * 0.55, 25));
-      return { group: GROUP_TIERS[i].group, price, rent, houseCost };
+      return { group: colours[i], price, rent, houseCost };
     });
   }
 
@@ -144,7 +149,8 @@
     const numMystery = Math.max(0, params.numMystery ?? 0);
     const extraCounts = {};
     Families.EXTRA_FAMILY_IDS.forEach((id) => {
-      extraCounts[id] = Math.max(0, (params.families && params.families[id]) || 0);
+      const wanted = Math.max(0, (params.families && params.families[id]) || 0);
+      extraCounts[id] = Math.min(wanted, Families.FAMILIES[id].max || wanted);
     });
 
     const nonCornerSlots = totalTiles - 4;
@@ -158,16 +164,24 @@
     let effective;
     if (fillerCount > nonCornerSlots - numGroups * MIN_GROUP_SIZE) {
       const maxFiller = Math.max(0, nonCornerSlots - numGroups * MIN_GROUP_SIZE);
-      const ratio = fillerCount > 0 ? maxFiller / fillerCount : 0;
-      const scale = (n) => Math.floor(n * ratio);
+      // On préserve d'abord les choix explicites (cases mystère, familles, péages) :
+      // ce sont les cases génériques (Destin, taxes, aéroports, compagnies) qui reculent en premier.
+      const chosen = numMystery + extraTotal;
+      const generic = numChanceCards + numSpecialCards + numTaxes + numAirports + numUtilities;
+      const genericRoom = maxFiller - chosen;
+      const keepChosen = genericRoom >= 0;
+      const ratioGeneric = keepChosen ? (generic > 0 ? genericRoom / generic : 0) : 0;
+      const ratioAll = fillerCount > 0 ? maxFiller / fillerCount : 0;
+      const scaleG = (n) => Math.floor(n * (keepChosen ? ratioGeneric : ratioAll));
+      const scaleC = (n) => (keepChosen ? n : Math.floor(n * ratioAll));
       effective = {
-        numChanceCards: scale(numChanceCards),
-        numSpecialCards: scale(numSpecialCards),
-        numTaxes: scale(numTaxes),
-        numAirports: scale(numAirports),
-        numUtilities: scale(numUtilities),
-        numMystery: scale(numMystery),
-        extra: Object.fromEntries(Object.entries(extraCounts).map(([k, v]) => [k, scale(v)])),
+        numChanceCards: scaleG(numChanceCards),
+        numSpecialCards: scaleG(numSpecialCards),
+        numTaxes: scaleG(numTaxes),
+        numAirports: scaleG(numAirports),
+        numUtilities: scaleG(numUtilities),
+        numMystery: scaleC(numMystery),
+        extra: Object.fromEntries(Object.entries(extraCounts).map(([k, v]) => [k, scaleC(v)])),
       };
     } else {
       effective = { numChanceCards, numSpecialCards, numTaxes, numAirports, numUtilities, numMystery, extra: extraCounts };
@@ -229,7 +243,18 @@
       }),
     };
     fillerBlocksByType.mystery = Array.from({ length: effective.numMystery }, () => [{ type: "mystery", name: "Case Mystère", short: "Mystère" }]);
-    Families.EXTRA_FAMILY_IDS.forEach((id) => {
+    // Les péages ne sont PAS répartis au hasard : ils occupent les deux
+    // extrémités opposées du plateau (la dernière case du côté 0 et celle
+    // du côté 2, juste avant les coins Prison et Aller en prison).
+    const tollBySide = [[], [], [], []];
+    {
+      const fam = Families.FAMILIES.toll;
+      const sidesForTolls = effective.extra.toll >= 2 ? [0, 2] : effective.extra.toll === 1 ? [[0, 2][randomInt(2)]] : [];
+      sidesForTolls.forEach((side, i) => {
+        tollBySide[side].push({ type: fam.base, family: "toll", name: fam.names[i % fam.names.length], short: fam.shorts[i % fam.shorts.length], price: fam.price, owner: null, mortgaged: false });
+      });
+    }
+    Families.EXTRA_FAMILY_IDS.filter((id) => id !== "toll").forEach((id) => {
       const fam = Families.FAMILIES[id];
       fillerBlocksByType[id] = Array.from({ length: effective.extra[id] }, (_, i) => [
         {
@@ -249,7 +274,16 @@
 
     // Capacité RÉELLE restant pour des propriétés sur chaque côté, une
     // fois les cases isolées ci-dessus déjà réservées.
-    const propertyCapacityPerSide = fillerBucketsBySide.map((bucket) => sideCapacity - bucket.length);
+    // Si un côté déborde (péages réservés + cases isolées), l'excédent part sur le côté le moins chargé.
+    for (let guard = 0; guard < 200; guard++) {
+      const load = fillerBucketsBySide.map((b, s) => b.length + tollBySide[s].length);
+      const over = load.findIndex((l) => l > sideCapacity);
+      if (over < 0 || fillerBucketsBySide[over].length === 0) break;
+      const lightest = load.indexOf(Math.min(...load));
+      if (lightest === over) break;
+      fillerBucketsBySide[lightest].push(fillerBucketsBySide[over].pop());
+    }
+    const propertyCapacityPerSide = fillerBucketsBySide.map((bucket, s) => Math.max(0, sideCapacity - bucket.length - tollBySide[s].length));
 
     // GARDE-FOU PRÉCIS : le calcul global (numGroups*2 <= propertyBudget)
     // ne suffit pas — chaque côté arrondit sa capacité à l'entier inférieur
@@ -420,7 +454,7 @@
     // Chaque côté est maintenant prêt : groupes dans l'ordre croissant de
     // prix, cases isolées réparties sur les 4 côtés et dispersées entre
     // les groupes sans jamais les déplacer.
-    const sides = sideChunks.map((chunks) => chunks.flat());
+    const sides = sideChunks.map((chunks, s) => chunks.flat().concat(tollBySide[s]));
 
     // 5) Place les coins fixes + chaque côté à son emplacement.
     const board = new Array(totalTiles);
@@ -434,6 +468,9 @@
     for (i = last + 1; i < 2 * last; i++) board[i] = sides[1][i - last - 1];
     for (i = 2 * last + 1; i < 3 * last; i++) board[i] = sides[2][i - 2 * last - 1];
     for (i = 3 * last + 1; i < totalTiles; i++) board[i] = sides[3][i - 3 * last - 1];
+
+    // Noms de rues maison, tirés au hasard (aperçu du salon compris).
+    if (StreetNames) StreetNames.applyStreetNames(board);
 
     return board;
   }

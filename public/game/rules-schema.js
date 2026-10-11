@@ -74,6 +74,7 @@
             { value: 9, label: "9" },
             { value: 10, label: "10" },
             { value: 11, label: "11" },
+            { value: 12, label: "12" },
           ],
         },
         {
@@ -95,7 +96,7 @@
           type: "select",
           default: 0,
           info:
-            "Si les événements mondiaux sont activés, tomber sur une carte Spéciale déclenche un événement temporaire (si aucun n'est déjà en cours). Sinon, elle tire un effet classique comme une carte Destin.",
+            "Chaque case Spéciale déclenche, quand un joueur tombe dessus, un événement mondial temporaire (inversion du sens de jeu, double déplacement, gel des échanges, ventes gratuites, réduction des prix, salaire doublé...) pour une durée limitée affichée à l'écran. Un seul événement est actif à la fois. Dès qu'il y a au moins une case Spéciale sur le plateau, les événements mondiaux sont activés.",
           options: [
             { value: 0, label: "0 (classique)" },
             { value: 1, label: "1" },
@@ -160,70 +161,6 @@
       category: "Familles de cases (plateau aléatoire)",
       rules: [
         {
-          id: "boardPorts",
-          showInfo: true,
-          label: "⚓ Ports",
-          type: "select",
-          default: 0,
-          info:
-            "Des ports à acheter, sur le modèle des aéroports mais un peu moins chers (180). Plus tu en possèdes, plus chacun rapporte (22, 50, 100, 190 puis 280 par visite). Un loyer régulier et sûr, qui récompense celui qui en collectionne plusieurs.",
-          options: [
-            { value: 0, label: "0 (aucune)" },
-            { value: 1, label: "1" },
-            { value: 2, label: "2" },
-            { value: 3, label: "3" },
-            { value: 4, label: "4" },
-          ],
-        },
-        {
-          id: "boardMetros",
-          showInfo: true,
-          label: "🚇 Stations de métro",
-          type: "select",
-          default: 0,
-          info:
-            "Des stations pas chères (120) qui rapportent peu au début (12 par visite) mais montent vite si tu en réunis plusieurs (jusqu'à 170). Idéal pour se lancer avec peu d'argent, et souvent visitées car elles sont nombreuses.",
-          options: [
-            { value: 0, label: "0 (aucune)" },
-            { value: 1, label: "1" },
-            { value: 2, label: "2" },
-            { value: 3, label: "3" },
-            { value: 4, label: "4" },
-          ],
-        },
-        {
-          id: "boardStadiums",
-          showInfo: true,
-          label: "🏟️ Stades",
-          type: "select",
-          default: 0,
-          info:
-            "Des stades à 220 dont le loyer (30, 70, 140, 260 puis 380) est DOUBLÉ tant qu'un événement mondial est en cours. Un petit pari qui prend tout son sens si les événements mondiaux sont activés.",
-          options: [
-            { value: 0, label: "0 (aucune)" },
-            { value: 1, label: "1" },
-            { value: 2, label: "2" },
-            { value: 3, label: "3" },
-            { value: 4, label: "4" },
-          ],
-        },
-        {
-          id: "boardParks",
-          showInfo: true,
-          label: "🎢 Parcs d'attractions",
-          type: "select",
-          default: 0,
-          info:
-            "Des parcs à 200 qui font payer un ticket à chaque visiteur (28, 60, 120, 220 puis 320 selon le nombre de parcs que tu possèdes). Un rendement simple et équilibré, entre les ports et les stades.",
-          options: [
-            { value: 0, label: "0 (aucune)" },
-            { value: 1, label: "1" },
-            { value: 2, label: "2" },
-            { value: 3, label: "3" },
-            { value: 4, label: "4" },
-          ],
-        },
-        {
           id: "boardUniversities",
           showInfo: true,
           label: "🎓 Universités",
@@ -235,38 +172,64 @@
             { value: 0, label: "0 (aucune)" },
             { value: 1, label: "1" },
             { value: 2, label: "2" },
-            { value: 3, label: "3" },
-            { value: 4, label: "4" },
+            { value: 3, label: "3" }
           ],
         },
         {
-          id: "boardMalls",
+          id: "boardTolls",
           showInfo: true,
-          label: "🛍️ Centres commerciaux",
+          label: "🛣️ Péages",
           type: "select",
           default: 0,
           info:
-            "Des centres à 240 dont le loyer dépend du visiteur : 12 de base, plus 5 par propriété que le visiteur possède (maximum 120). Ils rapportent donc davantage face aux joueurs riches en propriétés. Posséder plusieurs centres augmente encore le loyer (x1,6 pour deux, x2,2 pour trois, x2,8 pour quatre).",
+            "Deux péages au maximum, placés aux deux extrémités du plateau. Tout joueur qui PASSE devant (ou s'arrête dessus) paie un petit péage à leur propriétaire. Le montant évolue pendant la partie, proportionnel à la valeur de ce qui est acheté et construit sur le plateau, mais il ne dépasse jamais 15 % d'un salaire. Un petit revenu régulier, jamais une stratégie à lui seul.",
           options: [
-            { value: 0, label: "0 (aucune)" },
+            { value: 0, label: "0 (aucun)" },
+            { value: 1, label: "1" },
+            { value: 2, label: "2" },
+          ],
+        },
+        {
+          id: "boardCentralBank",
+          showInfo: true,
+          label: "🏛️ Banque centrale",
+          type: "select",
+          default: 0,
+          info:
+            "Une seule par plateau, à 300. Son propriétaire touche 15 % de chaque salaire que les autres joueurs perçoivent en passant par Départ (prélevés sur leur salaire). Elle rapporte de plus en plus au fil de la partie, mais reste un bonus modéré.",
+          options: [
+            { value: 0, label: "0 (aucun)" },
+            { value: 1, label: "1" },
+          ],
+        },
+        {
+          id: "boardAdAgencies",
+          showInfo: true,
+          label: "📺 Régies publicitaires",
+          type: "select",
+          default: 0,
+          info:
+            "Deux au maximum, à 220. Elle ne rapporte aucun loyer en elle-même, mais augmente de 10 % TOUS les loyers que tu touches. Avec la seconde régie, le bonus monte directement à 20 %. Une vraie synergie, très forte avec les deux.",
+          options: [
+            { value: 0, label: "0 (aucun)" },
+            { value: 1, label: "1" },
+            { value: 2, label: "2" },
+          ],
+        },
+        {
+          id: "boardGardens",
+          showInfo: true,
+          label: "🌳 Jardins publics",
+          type: "select",
+          default: 0,
+          info:
+            "À 180, un jardin ne rapporte rien en lui-même. En revanche son propriétaire prélève 10 % des loyers touchés par les propriétaires des deux cases rentables les plus proches, une à gauche et une à droite (propriétés, aéroports, compagnies, universités). Les cartes Destin, taxes, cases mystère et coins sont ignorés, on regarde simplement la case rentable suivante. L'emplacement fait toute la différence.",
+          options: [
+            { value: 0, label: "0 (aucun)" },
             { value: 1, label: "1" },
             { value: 2, label: "2" },
             { value: 3, label: "3" },
-            { value: 4, label: "4" },
           ],
-        },
-      ],
-    },
-    {
-      category: "Événements",
-      rules: [
-        {
-          id: "worldEventsEnabled",
-          label: "🌍 Événements mondiaux temporaires",
-          type: "boolean",
-          default: false,
-          info:
-            "Se déclenche quand un joueur tombe sur une case Spéciale (leur nombre se règle dans Plateau) : un effet global aléatoire (inversion du sens de jeu, double déplacement, gel des échanges, ventes gratuites, réduction des prix, salaire doublé...) pour une durée limitée affichée à l'écran. Un seul actif à la fois.",
         },
       ],
     },
@@ -282,7 +245,7 @@
       ],
     },
     {
-      category: "Prêts & Assurance",
+      category: "Prêts",
       rules: [
         {
           id: "loansEnabled",
@@ -290,37 +253,6 @@
           type: "boolean",
           default: false,
           info: "Un joueur peut prêter de l'argent à un autre en choisissant librement le montant, le taux d'intérêt et la durée de remboursement. Tout est public : personne ne peut cacher une dette.",
-        },
-        {
-          id: "insuranceEnabled",
-          label: "🛡️ Assurance",
-          type: "boolean",
-          default: false,
-          info: "Un joueur peut souscrire l'une de 3 formules (coût et couverture différents) qui prend en charge une partie de ses loyers à payer pendant une durée limitée. Toi, l'hôte, choisis le prix de chaque formule ci-dessous.",
-        },
-        {
-          id: "insurancePlan1Price",
-          label: "Prix formule Basique (couvre 25% des loyers)",
-          type: "number",
-          default: 300,
-          min: 0,
-          max: 2000,
-        },
-        {
-          id: "insurancePlan2Price",
-          label: "Prix formule Standard (couvre 50% des loyers)",
-          type: "number",
-          default: 550,
-          min: 0,
-          max: 2000,
-        },
-        {
-          id: "insurancePlan3Price",
-          label: "Prix formule Premium (couvre 75% des loyers)",
-          type: "number",
-          default: 900,
-          min: 0,
-          max: 2000,
         },
       ],
     },
@@ -380,21 +312,6 @@
       ],
     },
     {
-      category: "Dés",
-      rules: [
-        {
-          id: "diceSides",
-          label: "Dés à",
-          type: "select",
-          default: 6,
-          options: [
-            { value: 6, label: "6 faces (classique)" },
-            { value: 8, label: "8 faces" },
-          ],
-        },
-      ],
-    },
-    {
       category: "Enchères",
       rules: [
         {
@@ -426,17 +343,6 @@
       category: "Échanges",
       rules: [
         {
-          id: "tradeTaxPercent",
-          label: "Taxe sur les échanges",
-          type: "select",
-          default: 0,
-          options: [
-            { value: 0, label: "Aucune" },
-            { value: 5, label: "5 %" },
-            { value: 10, label: "10 %" },
-          ],
-        },
-        {
           id: "secretTrades",
           label: "🤫 Négociations secrètes (les autres joueurs ne voient pas le contenu)",
           type: "boolean",
@@ -445,15 +351,15 @@
       ],
     },
     {
-      category: "IA",
+      category: "Rythme",
       rules: [
         {
           id: "slowMode",
-          label: "🐢 Mode lent (l'IA joue à vitesse humaine)",
+          label: "🐢 Mode lent (pions case par case)",
           type: "boolean",
           default: false,
           info:
-            "Ralentit nettement les déplacements et les décisions de l'IA pour pouvoir suivre ce qu'il se passe à l'œil, comme un vrai joueur — utile en observant une partie ou pour les nouveaux joueurs.",
+            "Les pions avancent case par case, comme à la main : si tu fais 5, ton pion passe par les 5 cases avant de s'arrêter. Valable pour tous les joueurs, et l'IA prend aussi son temps pour décider. Le jeu reste fluide, mais on peut suivre chaque déplacement sans se perdre.",
         },
       ],
     },

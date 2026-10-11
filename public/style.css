@@ -829,11 +829,10 @@ button:disabled {
   z-index: 2;
 }
 
-/* Mode lent : déplacements des pions IA bien plus lisibles à l'œil, comme
-   un vrai joueur humain qui prend son temps — les pions des VRAIS joueurs
-   ne sont jamais concernés, eux bougent toujours normalement. */
-body.slow-mode .token--ai {
-  transition: left 1.3s ease, top 1.3s ease;
+/* Mode lent : tous les pions avancent case par case, à un rythme
+   lisible à l'œil (humains comme IA). */
+body.slow-mode .token {
+  transition: left 0.3s ease-in-out, top 0.3s ease-in-out;
 }
 
 /* ============================================================
@@ -2281,12 +2280,11 @@ input[type="text"]:focus, input[type="number"]:focus, select:focus {
 .board-tile--mystery-revealed { animation: mystery-glow 2.4s ease-in-out infinite; }
 @keyframes mystery-glow { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.18); } }
 
-.board-tile--family-port { background: linear-gradient(180deg, #cfeaf6, #86c5e4); }
-.board-tile--family-metro { background: linear-gradient(180deg, #ffd9c9, #ff9f7c); }
-.board-tile--family-stadium { background: linear-gradient(180deg, #d9f5cf, #8fd878); }
-.board-tile--family-park { background: linear-gradient(180deg, #ffe3f4, #f7a5d3); }
 .board-tile--family-university { background: linear-gradient(180deg, #e3dcff, #aa9cf0); }
-.board-tile--family-mall { background: linear-gradient(180deg, #fff1c2, #f2c94c); }
+.board-tile--family-toll { background: linear-gradient(180deg, #e6e0d2, #b7ab8f); }
+.board-tile--family-centralbank { background: linear-gradient(180deg, #fff1c2, #f2c94c); }
+.board-tile--family-adagency { background: linear-gradient(180deg, #ffd9ec, #f58fc6); }
+.board-tile--family-garden { background: linear-gradient(180deg, #d9f5cf, #8fd878); }
 
 /* Salaire, cagnottes et indicateurs */
 .pot-indicator { font-family: var(--font-display); }
@@ -2304,3 +2302,4 @@ input[type="text"]:focus, input[type="number"]:focus, select:focus {
   letter-spacing: -0.01em;
 }
 .board-tile--type-mystery .board-tile__name { color: #ffe9b0; }
+
