@@ -1,0 +1,16 @@
+{
+  "name": "reach-up",
+  "version": "0.1.0",
+  "description": "Reach Up - jeu de plateau multijoueur (Phase 1 : fondation)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
