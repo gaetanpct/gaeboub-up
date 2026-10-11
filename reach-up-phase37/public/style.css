@@ -1,0 +1,1928 @@
+/* ============================================================
+   GAEBOUB-UP — Styles
+   Identité visuelle "casino premium" : fond sombre, accents or/cuivre,
+   typographie à personnalité pour les titres, couleurs de joueurs façon
+   pierres précieuses. Voir la palette ci-dessous — un seul endroit à
+   modifier pour ajuster l'identité visuelle de tout le jeu.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Fonds, du plus profond au plus clair */
+  --bg-void: #0a0810;
+  --bg-deep: #0c0910;
+  --bg-panel: #16121f;
+  --bg-panel-alt: #1c1725;
+  --bg-raised: #1a1522;
+  --bg-hover: #241d2e;
+
+  /* Bordures */
+  --border-subtle: #332c26;
+  --border-strong: #4a3f2e;
+
+  /* Texte */
+  --text-primary: #f0e6cf;
+  --text-secondary: #b8ac90;
+  --text-muted: #8a7d61;
+  --text-faint: #665f4a;
+
+  /* Or / cuivre — accent premium principal */
+  --gold: #c9a24b;
+  --gold-bright: #e0c073;
+  --gold-dim: #8a6f38;
+  --copper: #b8703f;
+
+  /* Accents sémantiques (volontairement sourds, pas néon) */
+  --positive: #6fbd8f;
+  --negative: #cf6b6b;
+  --info: #5a8fc0;
+  --power-accent: #b98ee0;
+
+  /* Joueurs — tons "pierres précieuses", distincts de l'or de l'interface */
+  --player-1: #c0455c; /* rubis */
+  --player-2: #4a83c4; /* saphir */
+  --player-3: #3f9e6e; /* émeraude */
+  --player-4: #9c5cc7; /* améthyste */
+
+  /* Cases du plateau — façon parchemin/ivoire (comme un vrai plateau
+     physique), contrastant avec le reste de l'interface qui reste sombre. */
+  --tile-bg: #ece0bf;
+  --tile-bg-alt: #e2d3a8;
+  --tile-text: #2b2013;
+  --tile-text-muted: #5c4f36;
+
+  /* Typographie */
+  --font-display: "Cormorant Garamond", Georgia, serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* RÈGLE DE SÉCURITÉ IMPORTANTE : par défaut, une classe qui fixe
+   "display" (ex: display:flex sur une modale ou un écran plein écran) a
+   la même priorité CSS que l'attribut [hidden] du navigateur — et comme
+   elle est déclarée après, elle gagnerait et l'élément resterait visible
+   MÊME hidden. Cette règle globale garantit que [hidden] l'emporte
+   toujours, quel que soit le composant ajouté par la suite. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background:
+    radial-gradient(ellipse 60% 40% at 50% 0%, rgba(201, 162, 75, 0.09), transparent 60%),
+    radial-gradient(ellipse 80% 60% at 50% 100%, rgba(0, 0, 0, 0.5), transparent 65%),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.012) 0px, rgba(255, 255, 255, 0.012) 1px, transparent 1px, transparent 3px),
+    var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  padding: 2rem 1rem;
+}
+
+.app {
+  width: 100%;
+  max-width: 720px;
+  text-align: center;
+}
+
+h1 {
+  margin-bottom: 1.5rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 2.4rem;
+  letter-spacing: 0.02em;
+  background: linear-gradient(135deg, var(--gold-bright), var(--gold) 60%, var(--copper));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.log-title {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+/* ---- Écran d'accueil ---- */
+
+.screen {
+  text-align: left;
+}
+
+#screen-home {
+  max-width: 360px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+#screen-home label {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--text-secondary);
+}
+
+#screen-home input {
+  width: 100%;
+  padding: 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  margin-bottom: 0.75rem;
+  font-size: 1rem;
+}
+
+.or-separator {
+  color: var(--text-faint);
+  margin: 0.75rem 0;
+}
+
+.join-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.join-row input {
+  text-transform: uppercase;
+  text-align: center;
+  letter-spacing: 0.2em;
+}
+
+.footer-link {
+  margin-top: 2rem;
+  font-size: 0.85rem;
+}
+
+.footer-link a {
+  color: var(--text-muted);
+}
+
+.error-text {
+  color: var(--negative);
+  min-height: 1.2em;
+  margin-top: 0.5rem;
+}
+
+/* ---- Boutons ---- */
+
+button {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
+}
+
+button:hover {
+  background: var(--bg-hover);
+  border-color: var(--gold-dim);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(160deg, var(--gold-bright), var(--gold) 55%, var(--copper));
+  border: 1px solid var(--gold-dim);
+  color: #241a0a;
+  width: 100%;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.btn-primary:hover {
+  background: linear-gradient(160deg, #ecd08c, var(--gold-bright) 55%, var(--gold));
+  border-color: var(--gold-bright);
+}
+
+/* ---- Salon d'attente ---- */
+
+.lobby-code-line {
+  text-align: center;
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+}
+
+.lobby-code-line strong {
+  color: var(--gold-bright);
+  letter-spacing: 0.2em;
+  font-size: 1.3rem;
+}
+
+.test-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin: 1rem 0;
+}
+
+/* ---- Cartes joueurs (salon + jeu) ---- */
+
+.players-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.player-card {
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  border: 2px solid transparent;
+}
+
+.player-card h3 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.player-card p {
+  margin: 0.15rem 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.player-money {
+  position: relative;
+  color: var(--gold-bright) !important;
+  font-weight: 700;
+}
+
+.money-delta {
+  position: absolute;
+  left: calc(100% + 0.4em);
+  top: 50%;
+  font-size: 0.85em;
+  font-weight: 800;
+  padding: 0.05em 0.4em;
+  border-radius: 999px;
+  white-space: nowrap;
+  animation: money-delta-float 1.8s ease-out forwards;
+}
+
+.money-delta--positive {
+  background: rgba(111, 189, 143, 0.18);
+  color: var(--positive);
+}
+
+.money-delta--negative {
+  background: rgba(207, 107, 107, 0.18);
+  color: var(--negative);
+}
+
+@keyframes money-delta-float {
+  0% { opacity: 0; transform: translate(0, -50%) scale(0.85); }
+  15% { opacity: 1; transform: translate(0, -75%) scale(1); }
+  75% { opacity: 1; transform: translate(0, -95%) scale(1); }
+  100% { opacity: 0; transform: translate(0, -115%) scale(0.95); }
+}
+
+.player-card--current {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold-dim), 0 0 16px rgba(201, 162, 75, 0.18);
+}
+
+.player-card--bankrupt {
+  opacity: 0.5;
+}
+
+.player-card--indebt {
+  box-shadow: 0 0 0 1px var(--negative), 0 0 14px rgba(207, 107, 107, 0.2);
+}
+
+.player-status {
+  font-weight: 600;
+  color: var(--positive);
+}
+
+.winner-banner {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, #241a0a, var(--copper));
+  color: var(--gold-bright);
+  padding: 0.9rem 1rem;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 1.05rem;
+  text-align: center;
+  box-shadow: 0 0 20px rgba(255, 215, 106, 0.4);
+  animation: victory-pop 0.5s ease-out;
+}
+
+@keyframes victory-pop {
+  0% { transform: scale(0.85); opacity: 0; }
+  60% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ---- Zone d'action (dés / achat / attente) ---- */
+
+.action-area {
+  margin-bottom: 1.5rem;
+}
+
+.action-box {
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 1rem;
+  text-align: center;
+}
+
+.action-box--compact {
+  padding: 0.6rem 0.7rem;
+}
+
+.action-box--compact p,
+.action-box--compact .auction-countdowns {
+  margin: 0.2rem 0;
+  font-size: 0.78rem;
+}
+
+.action-box--compact .auction-header {
+  font-size: 0.85rem;
+}
+
+.auction-box-compact .btn-quick-bid,
+.action-box--compact .btn-quick-bid {
+  padding: 0.35rem 0.4rem;
+  font-size: 0.85rem;
+}
+
+.action-box--compact .quick-bid-row {
+  margin: 0.35rem 0;
+  gap: 0.35rem;
+}
+
+.action-box--compact button:not(.btn-quick-bid) {
+  font-size: 0.78rem;
+  padding: 0.35rem 0.6rem;
+}
+
+.action-box button {
+  margin: 0.25rem;
+}
+
+.action-box--waiting {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ---- Journal de partie ---- */
+
+.log-panel {
+  background: var(--bg-deep);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  height: 260px;
+  overflow-y: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   Phase 4 : plateau visuel (pions, couleurs, dés animés)
+   ============================================================ */
+
+.board-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+}
+
+.active-event-banner {
+  width: 100%;
+  max-width: 620px;
+  background: linear-gradient(90deg, var(--copper), var(--negative));
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--gold-bright);
+  animation: event-pulse 2s ease-in-out infinite;
+}
+
+@keyframes event-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+.board-grid {
+  position: relative;
+  width: min(96vw, 700px);
+  aspect-ratio: 1 / 1;
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  grid-template-rows: repeat(11, 1fr);
+  background: var(--bg-deep);
+  border: 2px solid var(--gold-dim);
+  border-radius: 12px;
+  padding: 5px;
+  gap: 2px;
+  container-type: inline-size;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.board-grid--event-active {
+  animation: board-event-glow 1.6s ease-in-out infinite;
+}
+
+@keyframes board-event-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 18px 4px rgba(224, 92, 92, 0.55);
+    border-color: var(--negative);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 32px 10px rgba(224, 92, 92, 0.85);
+    border-color: var(--copper);
+  }
+}
+
+/* Apocalypse active : bien plus dramatique et distinct qu'un simple
+   événement mondial — irréversible, donc l'ambiance visuelle doit le
+   rappeler en permanence sans avoir à lire le texte. */
+.board-grid--apocalypse {
+  animation: board-apocalypse-glow 1.1s ease-in-out infinite;
+  filter: saturate(0.75) contrast(1.05);
+}
+
+.board-grid--apocalypse::after {
+  content: "☠️";
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  font-size: 1.6rem;
+  z-index: 5;
+  filter: none;
+  animation: board-apocalypse-skull-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes board-apocalypse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6), 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 24px 6px rgba(140, 15, 15, 0.75);
+    border-color: #8c0f0f;
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6), 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 42px 14px rgba(200, 20, 20, 0.95);
+    border-color: #e05c5c;
+  }
+}
+
+@keyframes board-apocalypse-skull-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
+
+.board-tile {
+  position: relative;
+  background: var(--tile-bg);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  text-align: center;
+  overflow: hidden;
+  color: var(--tile-text-muted);
+  box-shadow: inset 0 0 0 1px rgba(43, 32, 19, 0.18);
+}
+
+.board-tile--clickable {
+  cursor: pointer;
+}
+
+.board-tile--clickable:hover {
+  filter: brightness(1.06);
+}
+
+.board-tile--corner {
+  background: linear-gradient(160deg, var(--bg-panel-alt), var(--bg-deep));
+  justify-content: center;
+  color: var(--gold-bright);
+  gap: 0.15em;
+  box-shadow: inset 0 0 0 1px var(--gold-dim);
+}
+
+.board-tile--corner .board-tile__icon {
+  font-size: 4cqw;
+}
+
+.board-tile--corner .board-tile__name {
+  font-family: var(--font-display);
+  font-size: 2.3cqw;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.board-tile--property {
+  padding-top: 22%;
+}
+
+/* La bande de couleur est maintenant un vrai bandeau proéminent (façon
+   carte de jeu), pas un simple filet — c'est ce qui permet d'identifier
+   un groupe au premier coup d'œil, même à distance. */
+.board-tile__band {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 20%;
+  background: var(--group-color, transparent);
+  box-shadow: inset 0 -2px 3px rgba(0, 0, 0, 0.25);
+}
+
+.board-tile--disabled-zone {
+  filter: grayscale(0.9) brightness(0.75);
+  animation: disabled-zone-pulse 1.8s ease-in-out infinite;
+}
+
+.board-tile--disabled-zone::before {
+  content: "🚫";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 0.7rem;
+  z-index: 4;
+  filter: none;
+}
+
+@keyframes disabled-zone-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.board-tile--owned {
+  box-shadow: inset 0 0 0 4px var(--owner-color, transparent), inset 0 0 0 1px rgba(43, 32, 19, 0.3);
+}
+
+/* Case devenue indépendante (extraite de son groupe par la Société
+   Immobilière d'un autre joueur) : motif doré rayé sur le bandeau de
+   couleur + petit cadenas ouvert, pour bien montrer qu'elle ne fait plus
+   partie d'un groupe à compléter et peut être développée seule. */
+.board-tile--independent .board-tile__band {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--gold-bright, #e8c468),
+    var(--gold-bright, #e8c468) 6px,
+    rgba(0, 0, 0, 0.35) 6px,
+    rgba(0, 0, 0, 0.35) 12px
+  ) !important;
+}
+
+.board-tile--independent::before {
+  content: "🔓";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  font-size: 0.65rem;
+  z-index: 4;
+}
+
+/* Petit fanion coloré dans le coin — bien plus repérable d'un coup d'œil
+   qu'une simple bordure, même à distance ou sur un petit écran. */
+.board-tile--owned::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30%;
+  height: 30%;
+  background: var(--owner-color, transparent);
+  clip-path: polygon(100% 0, 100% 100%, 0 0);
+  z-index: 1;
+  box-shadow: -1px 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.board-tile--side.board-tile--owned::after {
+  /* Sur les côtés gauche/droit, la bande de couleur est déjà à gauche :
+     le fanion se met plutôt en haut à droite du bloc icône/nom, sans
+     recouvrir le nom de la propriété. */
+  top: 0;
+  right: 0;
+  width: 22%;
+  height: 40%;
+}
+
+.board-tile__top-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2em;
+  min-height: 1.8cqw;
+}
+
+.board-tile__icon {
+  font-size: 2.5cqw;
+  line-height: 1;
+}
+
+.board-tile__buildings {
+  font-size: 1.7cqw;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+/* Cases latérales (gauche/droite, hors coins) : disposition HORIZONTALE
+   — bande de couleur en barre verticale à gauche, icône au-dessus de
+   l'indicateur de construction, nom sur une ligne bien lisible qui
+   utilise toute la largeur disponible. C'est ce qui change vraiment la
+   lisibilité par rapport à une case carrée classique. */
+.board-tile--side {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5em;
+  padding: 0 0.5em;
+  text-align: left;
+}
+
+.board-tile--side.board-tile--property {
+  padding-top: 0;
+}
+
+.board-tile--side .board-tile__band {
+  position: static;
+  flex: 0 0 auto;
+  width: 12%;
+  height: 68%;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.board-tile--side .board-tile__top-row {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.05em;
+  min-height: 0;
+}
+
+.board-tile--side .board-tile__name {
+  text-align: left;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 1.65cqw;
+}
+
+.board-tile__name {
+  font-size: 1.85cqw;
+  font-weight: 600;
+  line-height: 1.15;
+  word-break: break-word;
+  padding: 0.15em 0.2em 0.3em;
+  color: var(--tile-text);
+}
+
+.board-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: radial-gradient(ellipse at 50% 30%, var(--bg-panel-alt), var(--bg-deep) 75%);
+  border: 1px solid var(--gold-dim);
+  border-radius: 10px;
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(201, 162, 75, 0.08);
+}
+
+.board-center__tagline {
+  font-family: var(--font-display);
+  font-size: clamp(0.6rem, 1.1cqw, 0.8rem);
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--gold-dim);
+  margin-top: -0.5rem;
+}
+
+.board-center__title {
+  font-weight: 800;
+  font-size: clamp(1.1rem, 3.4cqw, 1.9rem);
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+.dice-row {
+  display: flex;
+  gap: 0.5rem;
+  min-height: 2.2rem;
+}
+
+.die {
+  width: 2.3rem;
+  height: 2.3rem;
+  background: linear-gradient(160deg, #faf3e0, var(--tile-bg));
+  border: 1px solid var(--gold-dim);
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  padding: 4px;
+  gap: 1px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+}
+
+.die-dot {
+  border-radius: 50%;
+}
+
+.die-dot--on {
+  background: var(--copper);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.3);
+}
+
+.dice-row--rolling .die {
+  animation: dice-roll 0.4s ease;
+}
+
+.die--number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--copper);
+}
+
+@keyframes dice-roll {
+  0% { transform: rotate(0deg) scale(1); }
+  40% { transform: rotate(-25deg) scale(1.15); }
+  70% { transform: rotate(15deg) scale(1.05); }
+  100% { transform: rotate(0deg) scale(1); }
+}
+
+.turn-indicator {
+  font-size: 0.8rem;
+  color: var(--positive);
+  font-weight: 600;
+  text-align: center;
+  padding: 0 0.5rem;
+}
+
+.tokens-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.buildings-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.buildings-badge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 1.5cqw;
+  line-height: 1;
+  white-space: nowrap;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+}
+
+.buildings-badge:empty {
+  display: none;
+}
+
+.token {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: left 0.35s ease, top 0.35s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.58rem;
+  font-weight: 800;
+  font-family: var(--font-body);
+  color: #fff8ea;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+  background:
+    radial-gradient(circle, var(--token-color, var(--gold)) 56%, transparent 57%),
+    repeating-conic-gradient(var(--token-color, var(--gold)) 0deg 16deg, #f0e6cf 16deg 32deg);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  z-index: 2;
+}
+
+/* Mode lent : déplacements des pions IA bien plus lisibles à l'œil, comme
+   un vrai joueur humain qui prend son temps — les pions des VRAIS joueurs
+   ne sont jamais concernés, eux bougent toujours normalement. */
+body.slow-mode .token--ai {
+  transition: left 1.3s ease, top 1.3s ease;
+}
+
+/* ============================================================
+   Phase 5 : personnalisation + écran de jeu sur un seul écran (sans scroll)
+   ============================================================ */
+
+/* ---- Réglages de la partie (salon d'attente) ---- */
+
+.btn-ready--active {
+  background: linear-gradient(160deg, #4fd97f, #2e9e58) !important;
+  border-color: #2e9e58 !important;
+  color: #06210f !important;
+}
+
+.add-ai-panel {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 0.7rem 0.9rem;
+  margin: 0.7rem 0;
+}
+
+.add-ai-panel label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.btn-remove-ai {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.6rem;
+  background: transparent;
+  border: 1px solid var(--negative);
+  color: var(--negative);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.settings-panel {
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.settings-panel h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.settings-panel label {
+  display: block;
+  margin-bottom: 0.6rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.settings-panel select {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-void);
+  color: var(--text-primary);
+}
+
+.checkbox-label {
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.settings-category {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem 0.2rem;
+  margin: 0 0 0.7rem;
+}
+
+.settings-category legend {
+  padding: 0 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--gold-bright);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settings-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* ---- Écran de jeu : tient sur un seul écran, sans scroll de page ---- */
+
+body.is-game-screen {
+  padding: 0;
+  align-items: stretch;
+  justify-content: stretch;
+  overflow-y: auto;
+  height: 100vh;
+  height: 100dvh;
+}
+
+body.is-game-screen .app {
+  display: none;
+}
+
+.screen-game {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
+  padding: 0.35rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.game-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0.75rem;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.game-layout .board-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* La taille exacte (toujours un carré qui tient dans l'espace
+   disponible, quelle que soit la fenêtre) est calculée en JavaScript
+   par resizeBoardToFit() dans board-view.js — un calcul CSS pur ne peut
+   pas garantir qu'un carré tienne à la fois en largeur ET en hauteur
+   dans un conteneur flexible, ce qui provoquait un plateau parfois plus
+   grand que l'écran, avec le haut invisible. Cette valeur n'est qu'un
+   filet de sécurité le temps que le JS s'exécute au premier rendu. */
+.game-layout .board-grid {
+  width: min(90vh, 60vw, 1040px);
+}
+
+.game-sidebar {
+  flex: 0 1 270px;
+  min-width: 220px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow: hidden;
+}
+
+.players-panel--compact {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
+.players-panel--compact .player-card {
+  flex: 1 1 140px;
+  padding: 0.5rem 0.7rem;
+}
+
+.players-panel--compact .player-card h3 {
+  font-size: 0.9rem;
+}
+
+.players-panel--compact .player-card p {
+  font-size: 0.8rem;
+  margin: 0.1rem 0;
+}
+
+.game-sidebar .action-area {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+}
+
+.pot-indicator {
+  font-size: 0.7rem;
+  color: var(--gold-bright);
+  text-align: center;
+  padding: 0 0.5rem;
+  min-height: 1em;
+}
+
+.vacation-pot-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--bg-void);
+  background: linear-gradient(160deg, var(--gold-bright), var(--gold));
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+}
+
+/* En dessous de 900px de large (mobile/tablette), on empile le plateau
+   et la barre latérale au lieu de les mettre côte à côte. Le plateau
+   se redimensionne pour laisser de la place au reste. */
+@media (max-width: 900px) {
+  .game-layout {
+    flex-direction: column;
+  }
+
+  .game-layout .board-grid {
+    width: min(96vw, 60vh, 680px);
+    margin: 0 auto;
+  }
+
+  .game-sidebar {
+    flex: 1;
+    max-width: none;
+    min-height: 0;
+  }
+}
+
+/* ============================================================
+   Phase 6 : construction (maisons/hôtel) + hypothèque
+   ============================================================ */
+
+.btn-secondary {
+  width: 100%;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 4, 12, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  padding: 1rem;
+}
+
+.modal-box {
+  background: linear-gradient(165deg, var(--bg-panel-alt), var(--bg-raised));
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  width: min(520px, 100%);
+  max-height: 80vh;
+  max-height: 80dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(224, 192, 115, 0.08);
+  animation: modal-pop 0.18s ease-out;
+}
+
+@keyframes modal-pop {
+  0% { transform: scale(0.94) translateY(6px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.2rem 0.6rem;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 0.4rem;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.35rem;
+  color: var(--gold-bright);
+  letter-spacing: 0.01em;
+}
+
+.btn-close {
+  background: transparent;
+  border: none;
+  padding: 0.2rem 0.5rem;
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.btn-close:hover {
+  color: var(--negative);
+  background: transparent;
+}
+
+.properties-list {
+  overflow-y: auto;
+  padding: 0 1.2rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.properties-empty {
+  padding: 0 1.2rem 1.2rem;
+  color: var(--text-muted);
+}
+
+.property-row {
+  background: var(--bg-panel-alt);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.property-row--mortgaged {
+  opacity: 0.7;
+}
+
+.property-row__info {
+  font-size: 0.9rem;
+}
+
+.mortgaged-tag {
+  color: var(--negative);
+  font-size: 0.75rem;
+  margin-left: 0.4rem;
+}
+
+.property-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.property-row__actions button {
+  font-size: 0.8rem;
+  padding: 0.4rem 0.6rem;
+}
+
+/* ============================================================
+   Phase 7 : enchères scellées + échanges entre joueurs
+   ============================================================ */
+
+.auction-input {
+  width: 100px;
+  text-align: center;
+  padding: 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-void);
+  color: var(--text-primary);
+  margin: 0.4rem 0.4rem 0.4rem 0;
+}
+
+.quick-bid-row {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin: 0.5rem 0;
+}
+
+.btn-quick-bid {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  font-weight: 700;
+  font-size: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--gold-dim);
+  background: linear-gradient(160deg, var(--gold-bright), var(--gold));
+  color: var(--bg-void);
+  cursor: pointer;
+}
+
+.btn-quick-bid:hover {
+  filter: brightness(1.08);
+}
+
+.auction-countdown {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-align: center;
+  margin: 0.3rem 0;
+}
+
+.auction-countdown--urgent {
+  color: var(--negative);
+  font-weight: 700;
+}
+
+.auction-countdowns {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0.4rem 0;
+}
+
+.auction-custom-bid {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin: 0.35rem 0;
+}
+
+.auction-custom-bid summary {
+  cursor: pointer;
+  color: var(--gold-bright);
+}
+
+.auction-custom-bid .auction-input {
+  width: 70px;
+  margin: 0.3rem 0.3rem 0 0;
+  padding: 0.25rem;
+}
+
+.stepper-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+}
+
+.btn-stepper {
+  padding: 0.5rem 0.8rem;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.btn-stepper:hover {
+  border-color: var(--gold-dim);
+}
+
+.trade-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 0.5rem;
+}
+
+.trade-form > label {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.trade-form select {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-void);
+  color: var(--text-primary);
+}
+
+.trade-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.trade-column {
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 0.6rem;
+}
+
+.trade-column h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.trade-column label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
+.trade-column input[type="number"] {
+  width: 100%;
+  padding: 0.3rem;
+  border-radius: 5px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-void);
+  color: var(--text-primary);
+}
+
+.tile-checkbox-list {
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.tile-checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.tile-checkbox input {
+  width: auto;
+}
+
+.trade-section-title {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  margin: 0.8rem 0 0.4rem;
+}
+
+/* ============================================================
+   Phase 8b : aperçu du plateau généré (salon d'attente)
+   ============================================================ */
+
+.board-preview-panel {
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.board-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.board-preview-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.board-preview-header .btn-secondary {
+  width: auto;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.8rem;
+}
+
+.board-grid--preview {
+  position: relative;
+  width: min(100%, 360px);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  background: var(--bg-deep);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 1px;
+  display: grid;
+}
+
+/* ============================================================
+   Bouton d'information (ℹ️) pour les règles qui en ont besoin
+   ============================================================ */
+
+.info-toggle {
+  background: none;
+  border: none;
+  padding: 0 0.2rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.info-text {
+  background: var(--bg-void);
+  border-left: 3px solid var(--gold);
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  margin: 0.3rem 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* ============================================================
+   Phase 8c : pouvoirs des joueurs
+   ============================================================ */
+
+.power-badge {
+  color: var(--power-accent) !important;
+  font-weight: 600;
+}
+
+/* ============================================================
+   Phase 8f : panneau des règles actives + boutons secondaires compacts
+   ============================================================ */
+
+.active-rules-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.rule-chip {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.7rem;
+  color: var(--power-accent);
+  white-space: nowrap;
+}
+
+.rule-chip--event {
+  background: var(--copper);
+  border-color: var(--negative);
+  color: var(--gold-bright);
+  font-weight: 600;
+}
+
+.secondary-actions-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  flex: 0 0 auto;
+}
+
+.btn-icon {
+  flex: 1;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0.5rem;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  background: var(--bg-hover);
+}
+
+/* ============================================================
+   Phase 10 : pastilles de couleur, détail de case, statistiques,
+   référence des cartes/événements
+   ============================================================ */
+
+.tile-swatch {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-right: 0.15em;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.tile-swatch--icon {
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.9em;
+  width: auto;
+  height: auto;
+}
+
+.modal-box--wide {
+  width: min(680px, 100%);
+}
+
+.tile-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.85rem;
+}
+
+.tile-detail-table th,
+.tile-detail-table td {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tile-detail-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.tile-detail-row--current {
+  background: var(--bg-raised);
+  font-weight: 700;
+  color: var(--gold-bright);
+}
+
+.reference-list {
+  list-style: none;
+  margin: 0 0 0.8rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.reference-list li {
+  background: var(--bg-panel);
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.stats-card .property-row__info {
+  width: 100%;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.3rem 0.8rem;
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   Refonte visuelle "casino premium" — barre supérieure, menu,
+   notifications, carte animée, journal compact dans le plateau
+   ============================================================ */
+
+.game-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.game-topbar .active-event-banner {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.btn-icon-ghost {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  width: 2.2rem;
+  height: 2.2rem;
+  flex: 0 0 auto;
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon-ghost:hover {
+  border-color: var(--gold-dim);
+  color: var(--gold-bright);
+}
+
+.modal-box--narrow {
+  width: min(360px, 100%);
+}
+
+.menu-divider {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 0.8rem 0;
+}
+
+.btn-danger {
+  background: transparent;
+  border: 1px solid var(--negative);
+  color: var(--negative);
+  width: 100%;
+  padding: 0.6rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background: rgba(207, 107, 107, 0.12);
+}
+
+.forfeit-confirm {
+  margin-top: 0.8rem;
+  background: var(--bg-panel-alt);
+  border-radius: 8px;
+  padding: 0.8rem;
+}
+
+.forfeit-confirm p {
+  margin: 0 0 0.6rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.forfeit-confirm__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.forfeit-confirm__actions button {
+  flex: 1;
+}
+
+/* ---- Notifications temporaires ("toasts") ---- */
+
+.toast-container {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 50;
+  pointer-events: none;
+  max-width: min(90vw, 420px);
+}
+
+.toast {
+  background: var(--bg-raised);
+  border-left: 3px solid var(--gold);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---- Carte animée (Destin / Spéciale / Événement mondial) ---- */
+
+.card-reveal {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  width: min(300px, 88vw);
+  z-index: 45;
+  cursor: pointer;
+  pointer-events: none; /* laisse le plateau/l'interface derrière rester utilisable */
+}
+
+.card-reveal__card {
+  pointer-events: auto;
+  width: 100%;
+  background: linear-gradient(160deg, var(--bg-panel-alt), var(--bg-raised));
+  border: 1px solid var(--gold-dim);
+  border-radius: 14px;
+  padding: 1.1rem 1.2rem;
+  text-align: center;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(201, 162, 75, 0.15);
+  animation: card-slide-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.card-reveal--dramatic .card-reveal__card {
+  border-color: var(--copper);
+  box-shadow: 0 14px 46px rgba(184, 112, 63, 0.25), 0 0 0 1px rgba(184, 112, 63, 0.3);
+}
+
+@keyframes card-slide-in {
+  0% { transform: translateY(16px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+.card-reveal__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.3rem;
+  color: var(--gold-bright);
+  margin-bottom: 0.7rem;
+  letter-spacing: 0.02em;
+}
+
+.card-reveal__text {
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+/* ---- Journal compact intégré au centre du plateau ---- */
+
+.board-center__log-wrap {
+  width: 90%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+
+.board-log-panel {
+  width: 100%;
+  max-height: 7.2em;
+  overflow-y: auto;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  text-align: left;
+  color: var(--text-secondary);
+}
+
+.btn-text-link {
+  background: none;
+  border: none;
+  color: var(--gold-dim);
+  font-size: 0.68rem;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.btn-text-link:hover {
+  color: var(--gold-bright);
+}
+
+.log-panel--full {
+  height: 50vh;
+}
+
+.log-line {
+  padding: 0.1rem 0;
+}
+
+.log-line--turn {
+  color: var(--gold-dim);
+  font-weight: 600;
+  margin-top: 0.3rem;
+}
+
+.log-line--major {
+  color: var(--gold-bright);
+  font-weight: 700;
+}
+
+.log-line--positive {
+  color: var(--positive);
+}
+
+.log-line--negative,
+.log-line--negative-soft {
+  color: var(--negative);
+}
+
+.log-line--neutral {
+  color: var(--text-secondary);
+}
+
+
+/* ---- Tchat en direct (panneau flottant) ---- */
+.chat-toggle {
+  position: fixed;
+  left: 0.6rem;
+  bottom: 0.6rem;
+  z-index: 40;
+  width: 2.8rem;
+  height: 2.8rem;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font-size: 1.25rem;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+.chat-toggle--pulse {
+  animation: chat-pulse 0.9s ease-in-out 3;
+  border-color: var(--gold);
+}
+@keyframes chat-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.18); box-shadow: 0 0 14px var(--gold); }
+}
+.chat-badge {
+  position: absolute;
+  top: -0.25rem;
+  right: -0.25rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.25rem;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--negative);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.1rem;
+  text-align: center;
+}
+.chat-panel {
+  position: fixed;
+  left: 0.6rem;
+  bottom: 3.9rem;
+  z-index: 40;
+  width: min(320px, calc(100vw - 1.2rem));
+  max-height: min(55vh, 340px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.chat-panel[hidden] { display: none; }
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.85rem;
+}
+.chat-messages {
+  flex: 1;
+  min-height: 90px;
+  overflow-y: auto;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.82rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.chat-msg { word-break: break-word; }
+.chat-msg--private { font-style: italic; color: var(--power-accent); }
+.chat-msg__who { font-weight: 700; }
+.chat-empty { color: var(--text-faint); font-style: italic; }
+.chat-form {
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.4rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.chat-form select { max-width: 6.5rem; }
+.chat-form input { flex: 1; min-width: 0; }
+.chat-form button { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+
+
+/* ---- Clauses d'échange élargies ---- */
+.clause-box {
+  margin-top: 0.6rem;
+  padding: 0.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+}
+.clause-box h5 { margin: 0; font-size: 0.82rem; color: var(--gold-bright); }
+.clause-list { margin: 0; padding-left: 1.1rem; }
+.clause-list li { margin-bottom: 0.2rem; }
+.clause-list button { margin-left: 0.3rem; padding: 0 0.35rem; }
+.clause-params { display: flex; flex-direction: column; gap: 0.3rem; }
