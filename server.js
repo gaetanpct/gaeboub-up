@@ -73,6 +73,16 @@ function aiDisplayName(room) {
   return `${base} (${suffix})`;
 }
 
+const CHAT_MAX_LENGTH = 200;
+const CHAT_HISTORY_LIMIT = 50;
+const CHAT_MIN_INTERVAL_MS = 700;
+
+// Historique du tchat visible par un joueur : les messages publics, plus
+// les privés qu'il a envoyés ou reçus (jamais ceux des autres).
+function chatHistoryFor(room, playerId) {
+  return (room.chatHistory || []).filter((m) => m.to === null || m.from === playerId || m.to === playerId);
+}
+
 function getRoom(socket) {
   const code = socket.data.roomCode;
   return code ? rooms.get(code) : null;
@@ -382,6 +392,8 @@ function buildStateForPlayer(baseState, playerId, settings, engine) {
         if (trade.fromId === playerId) return trade;
         return { id: trade.id, fromId: trade.fromId, toId: trade.toId, hidden: true };
       }),
+      // Les contrats issus d'échanges secrets ne sont visibles que de leurs parties.
+      contracts: (state.contracts || []).filter((c) => c.giverId === playerId || c.receiverId === playerId),
     };
   }
 
@@ -504,6 +516,7 @@ io.on("connection", (socket) => {
         };
       }
       socket.emit("game:started", { state: stateForPlayer, socketToPlayerId: room.socketToPlayerId, settings: room.settings });
+      socket.emit("chat:history", chatHistoryFor(room, playerId));
       console.log(`${player.name} reconnecté en pleine partie (salon ${room.code}).`);
     } else {
       broadcastLobby(room);
@@ -610,6 +623,9 @@ io.on("connection", (socket) => {
     }
 
     room.started = true;
+    room.chatHistory = [];
+    room.chatSeq = 0;
+    room.chatLastSent = {};
     room.engine = new GameEngine(room.players.map((p) => p.name), {
       ...room.settings,
       customBoard: room.settings.boardMode === "random" ? room.previewBoard : undefined,
@@ -634,6 +650,63 @@ io.on("connection", (socket) => {
       }
     });
     scheduleAICheck(room);
+  });
+
+  // ---------------------------------------------------------------------
+  // Tchat en direct pendant la partie. Les messages ne passent PAS par
+  // l'état de jeu (événements séparés). L'expéditeur est TOUJOURS déduit
+  // de la socket, jamais d'un identifiant envoyé par le client. Un message
+  // privé n'est livré qu'à l'expéditeur et au destinataire.
+  // ---------------------------------------------------------------------
+  socket.on("chat:send", (payload) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    if (!payload || typeof payload !== "object") return;
+
+    const text = typeof payload.text === "string" ? payload.text.replace(/\s+/g, " ").trim().slice(0, CHAT_MAX_LENGTH) : "";
+    if (!text) return;
+
+    const now = Date.now();
+    room.chatLastSent = room.chatLastSent || {};
+    if (room.chatLastSent[myPlayerId] && now - room.chatLastSent[myPlayerId] < CHAT_MIN_INTERVAL_MS) {
+      socket.emit("chat:error", "Doucement, tu écris trop vite.");
+      return;
+    }
+
+    let toPlayerId = null;
+    if (payload.toPlayerId !== null && payload.toPlayerId !== undefined && payload.toPlayerId !== "") {
+      toPlayerId = Number(payload.toPlayerId);
+      const target = Number.isInteger(toPlayerId) ? room.engine.players[toPlayerId] : null;
+      if (!target || toPlayerId === myPlayerId || room.engine.aiPlayerIds.has(toPlayerId)) {
+        socket.emit("chat:error", "Destinataire invalide.");
+        return;
+      }
+    }
+
+    room.chatLastSent[myPlayerId] = now;
+    room.chatSeq = (room.chatSeq || 0) + 1;
+    const message = {
+      id: room.chatSeq,
+      from: myPlayerId,
+      fromName: room.engine.players[myPlayerId].name,
+      to: toPlayerId,
+      toName: toPlayerId === null ? null : room.engine.players[toPlayerId].name,
+      text,
+      ts: now,
+    };
+    room.chatHistory = room.chatHistory || [];
+    room.chatHistory.push(message);
+    if (room.chatHistory.length > CHAT_HISTORY_LIMIT) room.chatHistory.splice(0, room.chatHistory.length - CHAT_HISTORY_LIMIT);
+
+    if (toPlayerId === null) {
+      io.to(room.code).emit("chat:message", message);
+    } else {
+      const recipientSocketId = Object.keys(room.socketToPlayerId).find((sid) => room.socketToPlayerId[sid] === toPlayerId);
+      socket.emit("chat:message", message);
+      if (recipientSocketId && recipientSocketId !== socket.id) io.to(recipientSocketId).emit("chat:message", message);
+    }
   });
 
   socket.on("game:roll", () => {
@@ -800,10 +873,25 @@ io.on("connection", (socket) => {
       payload.offerTiles || [],
       payload.offerMoney || 0,
       payload.requestTiles || [],
-      payload.requestMoney || 0
+      payload.requestMoney || 0,
+      payload.offerClauses,
+      payload.requestClauses
     );
     if (!result || !result.ok) {
       socket.emit("room:error", (result && result.reason) || "Proposition impossible.");
+      return;
+    }
+    broadcastGame(room);
+  });
+
+  socket.on("game:exerciseOption", (payload = {}) => {
+    const room = getRoom(socket);
+    if (!room || !room.started || !room.engine) return;
+    const myPlayerId = room.socketToPlayerId[socket.id];
+    if (myPlayerId === undefined) return;
+    const result = room.engine.exerciseOption(payload.contractId, myPlayerId);
+    if (!result || !result.ok) {
+      socket.emit("room:error", (result && result.reason) || "Action impossible.");
       return;
     }
     broadcastGame(room);
@@ -1001,7 +1089,12 @@ io.on("connection", (socket) => {
     const myPlayerId = room.socketToPlayerId[socket.id];
     if (myPlayerId === undefined) return;
 
-    const result = room.engine.proposeLoan(myPlayerId, payload.toId, payload.amount, payload.interestRate, payload.duration);
+    const result = room.engine.proposeLoan(myPlayerId, payload.toId, payload.amount, payload.interestRate, payload.duration, {
+      mode: payload.mode,
+      sharePercent: payload.sharePercent,
+      interestFreeTurns: payload.interestFreeTurns,
+      collateralTile: payload.collateralTile,
+    });
     if (!result || !result.ok) {
       socket.emit("room:error", (result && result.reason) || "Proposition impossible.");
       return;
